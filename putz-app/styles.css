@@ -280,3 +280,14 @@ details[open] summary { margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.search {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 6px 4px 12px;
+  box-shadow: var(--shadow);
+}
+.search:focus-within { border-color: var(--accent); }
+.search .ico { width: 20px; height: 20px; color: var(--muted); flex: none; }
+.search input { border: 0; background: transparent; padding: 9px 0; min-width: 0; flex: 1; }
+.search input::-webkit-search-cancel-button { display: none; }
+.search .x[hidden] { display: none; }

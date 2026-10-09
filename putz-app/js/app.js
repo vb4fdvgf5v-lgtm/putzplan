@@ -8,7 +8,7 @@ const PLAYER_COLORS = { a: '#2E6F73', b: '#C8553D' };
 const SOON_MS = 7 * DAY;
 const DEFAULT_REWARDS ={ 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 
-const ui = { view: 'home', filter: 'all', showFresh: false, statsRange: 'week', sheet: null, modal: null, toast: null, error: null };
+const ui = { view: 'home', search: '', filter: 'all', showFresh: false, statsRange: 'week', sheet: null, modal: null, toast: null, error: null };
 let device = loadDevice();
 let store = null;
 let renderDeferred = false;
@@ -123,20 +123,37 @@ function taskRow(t, st, now) {
 
 // ---------- Ansichten ----------
 
-function viewHome(c) {
-  const { state, me, partner, now } = c;
+// Suche: Groß/Klein und Umlaute egal („spuele“ findet „Spüle“), alle Wörter müssen vorkommen.
+const fold = s => String(s).toLowerCase()
+  .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '');
+function matchesSearch(t, query) {
+  const hay = fold(`${t.name} ${AREAS[t.area].name} ${INTERVALS[t.interval].label}`);
+  return fold(query).split(/\s+/).filter(Boolean).every(word => hay.includes(word));
+}
+
+function homeList(c) {
+  const { state, now } = c;
+  const st = id => state.status[id];
+  const query = ui.search.trim();
+
+  if (query) {
+    const order = t => (st(t.id).overdue ? 0 : now >= st(t.id).earlyUntil ? 1 : 2);
+    const hits = TASKS.filter(t => matchesSearch(t, query))
+      .sort((a, b) => order(a) - order(b) || st(a.id).due - st(b.id).due);
+    return hits.length
+      ? `<h3 class="sec">Treffer <span>${hits.length}</span></h3><div class="list">${hits.map(t => taskRow(t, st(t.id), now)).join('')}</div>`
+      : `<p class="muted pad">Keine Aufgabe passt zu „${esc(query)}“. Versuch ein anderes Wort, z. B. „Bad“ oder „Fenster“.</p>`;
+  }
+
   const inFilter = t => ui.filter === 'all' || (ui.filter === 'W' ? t.interval === 'W' || t.interval === '2W' : t.interval === ui.filter);
   const tasks = TASKS.filter(inFilter);
-  const st = id => state.status[id];
   const overdue = tasks.filter(t => st(t.id).overdue)
     .sort((a, b) => st(b.id).overdueDays * st(b.id).points - st(a.id).overdueDays * st(a.id).points);
   const byDue = (a, b) => st(a.id).due - st(b.id).due || st(b.id).points - st(a.id).points;
   const isSoon = t => !st(t.id).overdue && now >= st(t.id).earlyUntil && st(t.id).due - now <= SOON_MS;
   const ready = tasks.filter(isSoon).sort(byDue);
   const fresh = tasks.filter(t => !st(t.id).overdue && !isSoon(t)).sort(byDue);
-  const picks = picksAvailable(state, me.id, c.vouchers);
-  const ti = state.teamInfo;
-  const weekTotal = state.week[me.id] + state.week[partner.id];
 
   const chip = (val, label) => `<button class="chip${ui.filter === val ? ' on' : ''}" data-action="filter" data-val="${val}">${label}</button>`;
   const section = (title, list, cls = '') => list.length
@@ -144,40 +161,59 @@ function viewHome(c) {
     : '';
 
   return `
+    <div class="chips">${chip('all', 'Alle')}${chip('W', 'Woche')}${chip('M', 'Monat')}${chip('Q', 'Quartal')}</div>
+    ${section('Überfällig', overdue, 'bad')}
+    ${section('Bald fällig', ready)}
+    ${!overdue.length && !ready.length ? '<p class="muted small pad">In den nächsten 7 Tagen ist nichts fällig.</p>' : ''}
+    ${fresh.length ? `<button class="sec toggle" data-action="toggleFresh">Später <span>${fresh.length}</span> ${ui.showFresh ? '▲' : '▼'}</button>
+      ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now)).join('')}</div>` : ''}` : ''}`;
+}
+
+function viewHome(c) {
+  const { state, me, partner } = c;
+  const picks = picksAvailable(state, me.id, c.vouchers);
+  const ti = state.teamInfo;
+  const weekTotal = state.week[me.id] + state.week[partner.id];
+  const overdueCount = TASKS.filter(t => state.status[t.id].overdue).length;
+
+  return `
     <header class="top">
       <div><div class="hello">Hallo ${esc(me.name)} ${esc(me.emoji)}</div><div class="sync s-${esc(store.status.split(':')[0])}">${syncLabel()}</div></div>
       ${avatar(me)}
     </header>
 
-    <section class="card hero">
-      ${ring(state.cleanliness)}
-      <div class="hero-text">
-        <div class="big">${state.cleanliness} %</div>
-        <div class="muted">der Wohnung sind frisch</div>
-        ${overdue.length || state.penaltyPerDayNow
-          ? `<div class="bad small">${plural(TASKS.filter(t => st(t.id).overdue).length, 'Aufgabe', 'Aufgaben')} überfällig · −${fmtDec(state.penaltyPerDayNow)} Pkt/Tag</div>`
-          : '<div class="good small">Nichts überfällig. Stark!</div>'}
-      </div>
-    </section>
+    <div class="search">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+      <input id="search" type="search" enterkeyhint="search" autocomplete="off" placeholder="Was hast du gemacht? z. B. Spüle"
+        value="${esc(ui.search)}" aria-label="Aufgabe suchen">
+      <button class="x" data-action="clearSearch" aria-label="Suche leeren" ${ui.search ? '' : 'hidden'}>×</button>
+    </div>
 
-    <section class="card">
-      <div class="row-between"><b>Team-Level ${ti.level}</b><span class="muted small">${fmtNum(state.teamScore)} / ${fmtNum(ti.next)}</span></div>
-      ${bar(ti.progress)}
-      <div class="week">
-        <span class="muted small">Diese Woche ${fmtNum(weekTotal)} Pkt</span>
-        <span class="small">${avatar(me)} ${fmtNum(state.week[me.id])} · ${avatar(partner)} ${fmtNum(state.week[partner.id])}</span>
-      </div>
-    </section>
+    <div id="home-cards" ${ui.search.trim() ? 'hidden' : ''}>
+      <section class="card hero">
+        ${ring(state.cleanliness)}
+        <div class="hero-text">
+          <div class="big">${state.cleanliness} %</div>
+          <div class="muted">der Wohnung sind frisch</div>
+          ${overdueCount
+            ? `<div class="bad small">${plural(overdueCount, 'Aufgabe', 'Aufgaben')} überfällig · −${fmtDec(state.penaltyPerDayNow)} Pkt/Tag</div>`
+            : '<div class="good small">Nichts überfällig. Stark!</div>'}
+        </div>
+      </section>
 
-    ${picks ? `<button class="card banner" data-action="tab" data-view="rewards">🎁 <span><b>${picks === 1 ? 'Eine Überraschung' : `${picks} Überraschungen`} freigespielt!</b><br><span class="small">Jetzt verdeckt wählen</span></span></button>` : ''}
+      <section class="card">
+        <div class="row-between"><b>Team-Level ${ti.level}</b><span class="muted small">${fmtNum(state.teamScore)} / ${fmtNum(ti.next)}</span></div>
+        ${bar(ti.progress)}
+        <div class="week">
+          <span class="muted small">Diese Woche ${fmtNum(weekTotal)} Pkt</span>
+          <span class="small">${avatar(me)} ${fmtNum(state.week[me.id])} · ${avatar(partner)} ${fmtNum(state.week[partner.id])}</span>
+        </div>
+      </section>
 
-    <div class="chips">${chip('all', 'Alle')}${chip('W', 'Woche')}${chip('M', 'Monat')}${chip('Q', 'Quartal')}</div>
+      ${picks ? `<button class="card banner" data-action="tab" data-view="rewards">🎁 <span><b>${picks === 1 ? 'Eine Überraschung' : `${picks} Überraschungen`} freigespielt!</b><br><span class="small">Jetzt verdeckt wählen</span></span></button>` : ''}
+    </div>
 
-    ${section('Überfällig', overdue, 'bad')}
-    ${section('Bald fällig', ready)}
-    ${!overdue.length && !ready.length ? '<p class="muted small pad">In den nächsten 7 Tagen ist nichts fällig.</p>' : ''}
-    ${fresh.length ? `<button class="sec toggle" data-action="toggleFresh">Später <span>${fresh.length}</span> ${ui.showFresh ? '▲' : '▼'}</button>
-      ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now)).join('')}</div>` : ''}` : ''}
+    <div id="home-list">${homeList(c)}</div>
   `;
 }
 
@@ -496,7 +532,18 @@ function scheduleRender() {
   if (document.activeElement?.matches?.('input, textarea')) { renderDeferred = true; return; }
   render();
 }
-document.addEventListener('focusout', () => setTimeout(() => { if (renderDeferred) scheduleRender(); }, 0));
+// Verzögert, damit ein Tipp auf einen Treffer noch ankommt, bevor neu gezeichnet wird (iOS schließt erst die Tastatur).
+document.addEventListener('focusout', () => setTimeout(() => { if (renderDeferred) scheduleRender(); }, 300));
+
+// Suche: nur die Trefferliste neu zeichnen, damit das Eingabefeld den Fokus behält.
+document.addEventListener('input', e => {
+  if (e.target.id !== 'search') return;
+  ui.search = e.target.value;
+  const active = Boolean(ui.search.trim());
+  document.getElementById('home-cards').hidden = active;
+  document.querySelector('[data-action="clearSearch"]').hidden = !ui.search;
+  document.getElementById('home-list').innerHTML = homeList(ctx());
+});
 
 // ---------- Aktionen ----------
 
@@ -553,6 +600,7 @@ const actions = {
   tab: d => { ui.view = d.view; ui.sheet = null; ui.modal = null; render(); scrollTo(0, 0); },
   filter: d => { ui.filter = d.val; render(); },
   toggleFresh: () => { ui.showFresh = !ui.showFresh; render(); },
+  clearSearch: () => { ui.search = ''; render(); document.getElementById('search')?.focus(); },
   statsRange: d => { ui.statsRange = d.val; render(); },
   open: d => { ui.sheet = d.id; render(); },
   closeSheet: () => { ui.sheet = null; render(); },
