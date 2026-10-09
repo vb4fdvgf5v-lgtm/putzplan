@@ -1,5 +1,5 @@
 import { TASKS, AREAS, INTERVALS } from './tasks.js';
-import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, DAY, RULES, TEAM } from './game.js';
+import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, DAY, RULES, TEAM } from './game.js';
 import { createStore, cloudEnabled } from './store.js';
 
 const $app = document.getElementById('app');
@@ -99,12 +99,12 @@ function avatar(p) {
   return `<span class="avatar" style="--pc:${PLAYER_COLORS[p.id]}">${esc(p.emoji || p.name[0])}</span>`;
 }
 
-function taskRow(t, st, now) {
+function taskRow(t, st, now, paused = false) {
   const a = AREAS[t.area];
   let note;
   if (st.overdue) {
     note = `<span class="bad">überfällig ${st.overdueDays ? `seit ${plural(st.overdueDays, 'Tag', 'Tagen')}` : 'seit heute'}</span>` +
-           (st.penaltyPerDay ? ` · −${fmtDec(st.penaltyPerDay)} Team/Tag` : '');
+           (st.penaltyPerDay ? ` · −${fmtDec(st.penaltyPerDay)} Team/Tag` : paused ? ' · pausiert' : '');
   } else if (now < st.earlyUntil) {
     note = `frisch · wieder ab ${fmtDate(st.earlyUntil)}`;
   } else {
@@ -142,7 +142,7 @@ function homeList(c) {
     const hits = TASKS.filter(t => matchesSearch(t, query))
       .sort((a, b) => order(a) - order(b) || st(a.id).due - st(b.id).due);
     return hits.length
-      ? `<h3 class="sec">Treffer <span>${hits.length}</span></h3><div class="list">${hits.map(t => taskRow(t, st(t.id), now)).join('')}</div>`
+      ? `<h3 class="sec">Treffer <span>${hits.length}</span></h3><div class="list">${hits.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>`
       : `<p class="muted pad">Keine Aufgabe passt zu „${esc(query)}“. Versuch ein anderes Wort, z. B. „Bad“ oder „Fenster“.</p>`;
   }
 
@@ -157,7 +157,7 @@ function homeList(c) {
 
   const chip = (val, label) => `<button class="chip${ui.filter === val ? ' on' : ''}" data-action="filter" data-val="${val}">${label}</button>`;
   const section = (title, list, cls = '') => list.length
-    ? `<h3 class="sec ${cls}">${title} <span>${list.length}</span></h3><div class="list">${list.map(t => taskRow(t, st(t.id), now)).join('')}</div>`
+    ? `<h3 class="sec ${cls}">${title} <span>${list.length}</span></h3><div class="list">${list.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>`
     : '';
 
   return `
@@ -166,7 +166,18 @@ function homeList(c) {
     ${section('Bald fällig', ready)}
     ${!overdue.length && !ready.length ? '<p class="muted small pad">In den nächsten 7 Tagen ist nichts fällig.</p>' : ''}
     ${fresh.length ? `<button class="sec toggle" data-action="toggleFresh">Später <span>${fresh.length}</span> ${ui.showFresh ? '▲' : '▼'}</button>
-      ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now)).join('')}</div>` : ''}` : ''}`;
+      ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>` : ''}` : ''}`;
+}
+
+function vacationCard(c) {
+  const pause = activePause(c.settings);
+  if (!pause) return '';
+  return `<section class="card vacation">
+    <div class="vacation-icon" aria-hidden="true">🏖️</div>
+    <div class="vacation-text"><b>Urlaubsmodus seit ${fmtDate(pause.from)}</b>
+      <span class="small muted">Die Putz-Uhr steht. Nichts wird überfällig, es gibt keine Minuspunkte. Abhaken geht trotzdem.</span></div>
+    <button class="btn small primary" data-action="endVacation">Beenden</button>
+  </section>`;
 }
 
 function viewHome(c) {
@@ -190,12 +201,15 @@ function viewHome(c) {
     </div>
 
     <div id="home-cards" ${ui.search.trim() ? 'hidden' : ''}>
+      ${vacationCard(c)}
       <section class="card hero">
         ${ring(state.cleanliness)}
         <div class="hero-text">
           <div class="big">${state.cleanliness} %</div>
           <div class="muted">der Wohnung sind frisch</div>
-          ${overdueCount
+          ${state.paused
+            ? '<div class="small vacation-ink">Urlaubsmodus: alles pausiert</div>'
+            : overdueCount
             ? `<div class="bad small">${plural(overdueCount, 'Aufgabe', 'Aufgaben')} überfällig · −${fmtDec(state.penaltyPerDayNow)} Pkt/Tag</div>`
             : '<div class="good small">Nichts überfällig. Stark!</div>'}
         </div>
@@ -345,6 +359,13 @@ function viewStats(c) {
   `;
 }
 
+function pastPauses(settings) {
+  const past = (settings.pauses ?? []).filter(p => p.to).slice(-3).reverse();
+  if (!past.length) return '';
+  const days = p => Math.max(1, Math.round((p.to - p.from) / DAY));
+  return `<div class="small muted pauses">Bisher: ${past.map(p => `${fmtDate(p.from)} – ${fmtDate(p.to)} (${plural(days(p), 'Tag', 'Tage')})`).join(' · ')}</div>`;
+}
+
 function viewSettings(c) {
   const { players, settings, me } = c;
   const link = `${location.origin}${location.pathname}#join=${device.household}`;
@@ -385,6 +406,16 @@ function viewSettings(c) {
       : `<p class="small">Die App speichert gerade <b>nur auf diesem Gerät</b>. Für zwei Handys einmal Supabase einrichten (README, Schritt 1).</p>`}
     </div>
 
+    <h3 class="sec">Urlaubsmodus</h3>
+    <div class="card">
+      ${activePause(settings)
+        ? `<p class="small">Aktiv seit <b>${fmtDate(activePause(settings).from)}</b>. Die Putz-Uhr steht für euch beide.</p>
+           <button class="btn primary" data-action="endVacation">Urlaub beenden</button>`
+        : `<p class="small muted">Wenn ihr länger weg seid oder nicht putzen könnt: Die Zeit bleibt stehen, nichts wird überfällig, es gibt keine Minuspunkte. Danach geht es dort weiter, wo ihr aufgehört habt. Gilt für euch beide.</p>
+           <button class="btn" data-action="startVacation">🏖️ Urlaub starten</button>`}
+      ${pastPauses(settings)}
+    </div>
+
     <h3 class="sec">Punkte anpassen</h3>
     ${Object.entries(AREAS).map(areaBlock).join('')}
 
@@ -416,7 +447,9 @@ function sheetHtml(c) {
       <h2>${esc(t.name)}</h2>
       <div class="sheet-pts"><b>${st.points}</b> Punkte${st.overdue ? ` <span class="badge">+${Math.round(RULES.rescueBonus * 100)} % Rettungsbonus</span>` : ''}</div>
       <p class="small muted">${last}</p>
-      ${st.overdue ? `<p class="small bad">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>` : ''}
+      ${st.overdue ? (c.state.paused
+        ? '<p class="small muted">Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
+        : `<p class="small bad">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
       ${early ? `<p class="hint">Noch frisch. Punkte gibt es wieder ab ${fmtDate(st.earlyUntil)}.</p>` : ''}
       <button class="btn primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}" ${early ? 'disabled' : ''}>✓ Erledigt · +${xp}</button>
       <button class="btn ghost" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}" ${early ? 'disabled' : ''}>Von ${esc(c.partner.name)} erledigt eintragen</button>
@@ -650,6 +683,20 @@ const actions = {
     if (confirm('Belohnung als eingelöst markieren?')) store.update(`reward-L${d.level}`, { redeemedAt: Date.now() });
   },
 
+  startVacation: () => {
+    if (!confirm('Urlaubsmodus starten? Die Putz-Uhr bleibt für euch beide stehen, bis ihr ihn beendet.')) return;
+    const settings = store.get('settings');
+    if (activePause(settings)) return;
+    store.put('settings', 'settings', { ...settings, pauses: [...(settings.pauses ?? []), { from: Date.now(), to: null }] });
+    showToast('Urlaubsmodus an. Erholt euch!');
+    render();
+  },
+  endVacation: () => {
+    const settings = store.get('settings');
+    store.put('settings', 'settings', { ...settings, pauses: (settings.pauses ?? []).map(p => (p.to ? p : { ...p, to: Date.now() })) });
+    showToast('Willkommen zurück! Die Uhr läuft wieder.');
+    render();
+  },
   setMe: d => { device.me = d.id; saveDevice(); render(); },
   share: async d => {
     if (navigator.share) {

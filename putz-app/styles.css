@@ -10,6 +10,7 @@
   --warn: #C98A12;
   --bad: #C8463D;
   --track: #ECE8E0;
+  --vacation: #1F8FA8;
   --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 4px 16px rgba(0, 0, 0, .04);
   --radius: 16px;
   color-scheme: light;
@@ -27,6 +28,7 @@
     --warn: #E5B04A;
     --bad: #F07B70;
     --track: #2B302D;
+    --vacation: #5CC3D9;
     --shadow: none;
     color-scheme: dark;
   }
@@ -291,3 +293,13 @@ details[open] summary { margin-bottom: 8px; }
 .search input { border: 0; background: transparent; padding: 9px 0; min-width: 0; flex: 1; }
 .search input::-webkit-search-cancel-button { display: none; }
 .search .x[hidden] { display: none; }
+
+.vacation {
+  display: flex; align-items: center; gap: 12px;
+  background: color-mix(in srgb, var(--vacation) 14%, var(--card));
+  border-color: color-mix(in srgb, var(--vacation) 45%, var(--line));
+}
+.vacation-icon { font-size: 28px; flex: none; }
+.vacation-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.vacation-ink { color: var(--vacation); font-weight: 600; }
+.pauses { margin-top: 10px; }

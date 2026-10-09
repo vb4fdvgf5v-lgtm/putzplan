@@ -56,12 +56,40 @@ export function monthStart(now) {
 
 export const xpOf = c => Math.round(c.points * (c.rescue ? 1 + RULES.rescueBonus : 1));
 
+/** Urlaubsmodus: eine laufende Pause hat `to: null`. */
+export const activePause = settings => (settings.pauses ?? []).find(p => !p.to) ?? null;
+
+/**
+ * Putz-Uhr, die während Urlaubspausen stillsteht.
+ * toEff: echte Zeit -> Putz-Zeit (Pausen herausgerechnet). toReal: umgekehrt;
+ * für die Zukunft während einer laufenden Pause wird angenommen, dass sie jetzt endet.
+ */
+export function pauseClock(pauses = [], now) {
+  const spans = pauses
+    .map(p => ({ from: p.from, to: Math.min(p.to ?? now, now) }))
+    .filter(p => p.to > p.from)
+    .sort((a, b) => a.from - b.from);
+  const toEff = t => t - spans.reduce((s, p) => s + Math.max(0, Math.min(t, p.to) - p.from), 0);
+  const toReal = e => {
+    let offset = 0;
+    for (const p of spans) {
+      if (e <= p.from - offset) return e + offset;
+      offset += p.to - p.from;
+    }
+    return e + offset;
+  };
+  return { toEff, toReal };
+}
+
 /**
  * Wertet den kompletten Verlauf aus.
  * Zu Beginn gilt jede Aufgabe als halb frisch, damit nicht alles sofort überfällig ist.
  */
 export function compute({ tasks, completions, settings, players, now }) {
   const start = settings.startedAt;
+  const { toEff, toReal } = pauseClock(settings.pauses, now);
+  const paused = Boolean(activePause(settings));
+  const nowE = toEff(now);
   const done = completions.filter(c => !c.deleted).sort((a, b) => a.at - b.at);
   const byTask = new Map(tasks.map(t => [t.id, []]));
   for (const c of done) byTask.get(c.taskId)?.push(c);
@@ -73,23 +101,26 @@ export function compute({ tasks, completions, settings, players, now }) {
   for (const task of tasks) {
     const p = taskPoints(task, settings), iv = intervalMs(task);
     const list = byTask.get(task.id);
+    // Alles hier in Putz-Zeit, damit Urlaubspausen weder Frische noch Abzüge kosten.
     const accrue = (due, until) => {
       const days = Math.min(RULES.penaltyCapDays, Math.floor((until - due) / DAY));
-      for (let d = 1; d <= days; d++) ticks.push({ at: due + d * DAY, amount: p * RULES.penaltyRate });
+      for (let d = 1; d <= days; d++) ticks.push({ at: toReal(due + d * DAY), amount: p * RULES.penaltyRate });
     };
-    let last = start - iv / 2;
-    for (const c of list) { accrue(last + iv, c.at); last = Math.max(last, c.at); }
-    accrue(last + iv, now);
+    let last = toEff(start) - iv / 2;
+    for (const c of list) { const at = toEff(c.at); accrue(last + iv, at); last = Math.max(last, at); }
+    accrue(last + iv, nowE);
 
     const due = last + iv;
-    const overdueDays = now > due ? Math.floor((now - due) / DAY) : 0;
-    const freshness = Math.max(0, Math.min(1, 1 - (now - last) / iv));
+    const overdueDays = nowE > due ? Math.floor((nowE - due) / DAY) : 0;
+    const freshness = Math.max(0, Math.min(1, 1 - (nowE - last) / iv));
     const lastC = list[list.length - 1];
     status[task.id] = {
-      points: p, last, due, freshness, overdueDays,
-      overdue: now > due,
-      penaltyPerDay: now > due && overdueDays < RULES.penaltyCapDays ? p * RULES.penaltyRate : 0,
-      earlyUntil: lastC ? last + iv * RULES.earlyFraction : 0,
+      points: p, freshness, overdueDays,
+      last: lastC ? lastC.at : start,
+      due: toReal(due),
+      overdue: nowE > due,
+      penaltyPerDay: !paused && nowE > due && overdueDays < RULES.penaltyCapDays ? p * RULES.penaltyRate : 0,
+      earlyUntil: lastC ? toReal(last + iv * RULES.earlyFraction) : 0,
       lastBy: lastC?.player ?? null,
       count: list.length,
     };
@@ -123,6 +154,7 @@ export function compute({ tasks, completions, settings, players, now }) {
   return {
     status,
     done,
+    paused,
     cleanliness: weightSum ? Math.round((freshWeighted / weightSum) * 100) : 100,
     penaltyTotal: Math.round(ticks.reduce((s, t) => s + t.amount, 0)),
     penaltyPerDayNow: Object.values(status).reduce((s, x) => s + x.penaltyPerDay, 0),

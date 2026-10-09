@@ -49,3 +49,27 @@ test('Level und Überraschungen', () => {
   const s = { personal: { a: { level: 3 } } };
   assert.equal(picksAvailable(s, 'a', [{ to: 'a', pickedAt: 1 }]), 1);
 });
+
+test('Urlaubsmodus: Uhr steht still, keine Abzüge während der Pause', () => {
+  const runP = (pauses, now) => compute({ tasks: [wc], completions: [], settings: { startedAt: start, pauses }, players, now });
+  // fällig nach 3,5 Tagen; 10 Tage Urlaub ab Tag 2, jetzt Tag 12
+  const pauses = [{ from: start + 2 * DAY, to: start + 12 * DAY }];
+  const s = runP(pauses, start + 12 * DAY);
+  assert.equal(s.penaltyTotal, 0);
+  assert.equal(s.status[wc.id].overdue, false);
+  assert.equal(s.status[wc.id].due, start + 13.5 * DAY); // Fälligkeit um die Pause verschoben
+  // laufende Pause: eingefroren, nichts kostet
+  const open = runP([{ from: start + 2 * DAY, to: null }], start + 30 * DAY);
+  assert.equal(open.paused, true);
+  assert.equal(open.penaltyTotal, 0);
+  assert.equal(open.cleanliness, run([], start + 2 * DAY).cleanliness);
+  // nach der Pause läuft die Zeit weiter: 2 Tage überfällig
+  assert.equal(runP(pauses, start + 15.5 * DAY).penaltyTotal, 2 * 2);
+});
+
+test('Urlaubsmodus: Abzüge vor der Pause bleiben', () => {
+  const s = compute({ tasks: [wc], completions: [], players, now: start + 20 * DAY,
+    settings: { startedAt: start, pauses: [{ from: start + 6.5 * DAY, to: null }] } });
+  assert.equal(s.penaltyTotal, 3 * 2); // 3 volle Tage überfällig vor dem Urlaub
+  assert.equal(s.status[wc.id].penaltyPerDay, 0);
+});
