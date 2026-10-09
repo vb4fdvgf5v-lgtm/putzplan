@@ -5,7 +5,7 @@ import { compute, DAY, rewardFairness, picksAvailable, levelInfo, PERSONAL } fro
 
 const players = [{ id: 'a' }, { id: 'b' }];
 const start = Date.UTC(2026, 9, 1);
-const wc = TASKS.find(t => t.id === 'b-wc-1');
+const wc = TASKS.find(t => t.id === 'b-dusche-1') // 20 Punkte;
 const run = (completions, now) => compute({ tasks: [wc], completions, settings: { startedAt: start }, players, now });
 
 test('zu Beginn halb frisch, nicht überfällig', () => {
