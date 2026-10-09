@@ -66,6 +66,13 @@ node --test test/game.test.mjs
 
 Nach Änderungen an Dateien die `VERSION` in [sw.js](sw.js) hochzählen, damit die iPhones die neue Fassung laden.
 
+## Änderungen veröffentlichen
+
+1. Änderung committen (Claude macht das, Commit-Mail ist die anonyme GitHub-Adresse).
+2. In **GitHub Desktop** auf **Push origin** klicken.
+3. Nach etwa einer Minute ist sie unter <https://vb4fdvgf5v-lgtm.github.io/putzplan/putz-app/> online.
+4. Auf dem iPhone die App ganz schließen und neu öffnen. Die Daten bleiben erhalten.
+
 ## Aufbau
 
 | Datei | Inhalt |
