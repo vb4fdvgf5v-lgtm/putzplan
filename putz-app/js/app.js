@@ -3,7 +3,10 @@ import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold
 import { createStore, cloudEnabled } from './store.js';
 
 const $app = document.getElementById('app');
-const DEVICE_KEY = 'putz:device';
+// Demo-Modus (Adresse mit ?demo): eigener Test-Haushalt nur im Browser, nie mit Supabase verbunden.
+const DEMO = new URLSearchParams(location.search).has('demo');
+const CLOUD = cloudEnabled && !DEMO;
+const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 const PLAYER_COLORS = { a: '#2E6F73', b: '#C8553D' };
 const SOON_MS = 7 * DAY;
 const DEFAULT_REWARDS ={ 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
@@ -209,7 +212,7 @@ function viewHome(c) {
 
   return `
     <header class="top">
-      <div><div class="hello">Hallo ${esc(me.name)} ${esc(me.emoji)}</div><div class="sync s-${esc(store.status.split(':')[0])}">${syncLabel()}</div></div>
+      <div><div class="hello">Hallo ${esc(me.name)} ${esc(me.emoji)}</div><div class="sync s-${esc(store.status.split(':')[0])}">${DEMO ? 'Demo · nicht mit eurem Haushalt verbunden' : syncLabel()}</div></div>
       ${avatar(me)}
     </header>
 
@@ -414,7 +417,7 @@ function viewSettings(c) {
 
     <h3 class="sec">Zweites Handy verbinden</h3>
     <div class="card">
-      ${cloudEnabled ? `
+      ${CLOUD ? `
         <p class="small muted">Schick den Link an das andere Handy. Dort in Safari öffnen, dann über „Teilen → Zum Home-Bildschirm“ installieren.
           Falls die installierte App den Code nicht übernimmt: unter „Haushalt beitreten“ einfügen.</p>
         <div class="code">${esc(device.household)}</div>
@@ -536,7 +539,7 @@ function renderSetup() {
     <h1>Putzplan</h1>
     <p class="muted">Euer gemeinsamer Putzplan mit Punkten, Leveln und Überraschungen.</p>
     ${ui.error ? `<p class="bad small">${esc(ui.error)}</p>` : ''}
-    ${cloudEnabled ? `<div class="card">
+    ${CLOUD ? `<div class="card">
       <h3>Haushalt beitreten</h3>
       <p class="small muted">Dein Partner oder deine Partnerin hat den Haushalt schon angelegt? Code einfügen.</p>
       <input id="join-code" value="${esc(joinCode)}" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off">
@@ -548,7 +551,7 @@ function renderSetup() {
       <div class="name-row"><input class="emoji-in" id="e2" value="🫧" maxlength="4"><input id="n2" placeholder="Name Partner/in" maxlength="24"></div>
       <button class="btn ${joinCode ? '' : 'primary'}" data-action="create">Los geht's</button>
     </div>
-    ${cloudEnabled ? '' : '<p class="small muted">Hinweis: Noch kein Supabase eingerichtet. Alles wird nur auf diesem Gerät gespeichert.</p>'}
+    ${CLOUD ? '' : '<p class="small muted">Hinweis: Noch kein Supabase eingerichtet. Alles wird nur auf diesem Gerät gespeichert.</p>'}
   </main>`;
 }
 
@@ -559,10 +562,25 @@ function renderWhoAmI(settings) {
   </main>`;
 }
 
+function createHousehold(name1, emoji1, name2, emoji2) {
+  openHousehold(newHouseholdCode());
+  store.put('settings', 'settings', {
+    players: [{ id: 'a', name: name1, emoji: emoji1 || '🧽' }, { id: 'b', name: name2, emoji: emoji2 || '🫧' }],
+    startedAt: Date.now(),
+    pointOverrides: {},
+  });
+  for (const [level, text] of Object.entries(DEFAULT_REWARDS)) {
+    store.put('reward', `reward-L${level}`, { level: Number(level), text });
+  }
+  device.me = 'a';
+  saveDevice();
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
 function openHousehold(code) {
   device.household = code;
   saveDevice();
-  store = createStore(code);
+  store = createStore(code, { cloud: CLOUD });
   store.subscribe(scheduleRender);
 }
 
@@ -755,18 +773,7 @@ const actions = {
     const v = id => document.getElementById(id).value.trim();
     if (!v('n1') || !v('n2')) { ui.error = 'Bitte beide Namen eintragen.'; return renderSetup(); }
     ui.error = null;
-    openHousehold(newHouseholdCode());
-    store.put('settings', 'settings', {
-      players: [{ id: 'a', name: v('n1'), emoji: v('e1') || '🧽' }, { id: 'b', name: v('n2'), emoji: v('e2') || '🫧' }],
-      startedAt: Date.now(),
-      pointOverrides: {},
-    });
-    for (const [level, text] of Object.entries(DEFAULT_REWARDS)) {
-      store.put('reward', `reward-L${level}`, { level: Number(level), text });
-    }
-    device.me = 'a';
-    saveDevice();
-    history.replaceState(null, '', location.pathname);
+    createHousehold(v('n1'), v('e1'), v('n2'), v('e2'));
     render();
   },
   join: async () => {
@@ -782,7 +789,7 @@ const actions = {
       saveDevice();
       store = null;
     } else {
-      history.replaceState(null, '', location.pathname);
+      history.replaceState(null, '', location.pathname + location.search);
     }
     render();
   },
@@ -815,10 +822,11 @@ document.addEventListener('change', e => {
 
 // ---------- Start ----------
 
-if (device.household) openHousehold(device.household);
+if (DEMO && !device.household) createHousehold('Matthes', '🧽', 'Hanna', '🫧');
+else if (device.household) openHousehold(device.household);
 render();
 
-if (cloudEnabled) {
+if (CLOUD) {
   const syncIfVisible = () => { if (store && document.visibilityState === 'visible') store.sync(); };
   store?.sync();
   document.addEventListener('visibilitychange', syncIfVisible);

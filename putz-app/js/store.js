@@ -6,7 +6,7 @@ export const cloudEnabled = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const PAGE = 1000;
 const OVERLAP_MS = 60_000; // Puffer gegen Uhren- und Transaktionsversatz beim inkrementellen Abruf
 
-export function createStore(household) {
+export function createStore(household, { cloud = cloudEnabled } = {}) {
   const key = `putz:data:${household}`;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(key)) ?? {}; } catch { /* leerer Start */ }
@@ -14,8 +14,8 @@ export function createStore(household) {
   let pending = new Set(saved.pending ?? []);
   let lastSync = saved.lastSync ?? null;
   // Noch nie abgeglichen (z. B. vor dem Eintragen von Supabase angelegt): alles Lokale hochladen.
-  if (cloudEnabled && !lastSync) items.forEach((_, id) => pending.add(id));
-  let status = cloudEnabled ? 'idle' : 'local';
+  if (cloud && !lastSync) items.forEach((_, id) => pending.add(id));
+  let status = cloud ? 'idle' : 'local';
   let syncing = null, flushTimer = null;
   const listeners = new Set();
 
@@ -71,7 +71,7 @@ export function createStore(household) {
   }
 
   async function sync() {
-    if (!cloudEnabled) return;
+    if (!cloud) return;
     if (syncing) return syncing;
     status = 'syncing'; emit();
     syncing = (async () => {
@@ -99,7 +99,7 @@ export function createStore(household) {
     listAll(kind) { return [...items.values()].filter(i => i.kind === kind).map(i => ({ id: i.id, ...i.data })); },
     put(kind, id, data) {
       items.set(id, { id, kind, data });
-      if (cloudEnabled) pending.add(id);
+      if (cloud) pending.add(id);
       persist();
       emit();
       clearTimeout(flushTimer);
