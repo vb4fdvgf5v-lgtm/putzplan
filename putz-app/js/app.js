@@ -577,6 +577,29 @@ function createHousehold(name1, emoji1, name2, emoji2) {
   history.replaceState(null, '', location.pathname + location.search);
 }
 
+// Beispieldaten für den Demo-Modus, damit alle Ansichten etwas zeigen.
+function seedDemo() {
+  createHousehold('Alex', '🧽', 'Sam', '🫧');
+  const now = Date.now();
+  const startedAt = now - 12 * DAY;
+  store.put('settings', 'settings', { ...store.get('settings'), startedAt });
+  const done = [
+    ['b-wc-1', 'a', 2], ['b-wc-2', 'b', 3], ['b-dusche-1', 'b', 4], ['k-herd', 'a', 1], ['k-spuele', 'b', 1],
+    ['k-arbeitsflaechen', 'a', 5], ['k-restmuell', 'b', 2], ['k-plastik', 'a', 6], ['w-teppich', 'a', 3],
+    ['w-staub-wohn', 'b', 4], ['w-aufraeumen-wohn', 'a', 1], ['b-waesche-hell', 'b', 2], ['b-waesche-dunkel', 'a', 5],
+    ['p-giessen', 'b', 3], ['r-behaelter', 'a', 6], ['k-backofen', 'b', 8], ['w-fensterbretter', 'a', 9],
+    ['b-boden-1', 'b', 10], ['k-mikrowelle', 'a', 9], ['a-abwasch', 'a', 0], ['a-abwasch', 'b', 1], ['a-spuelmaschine', 'b', 0],
+  ];
+  for (const [taskId, player, daysAgo] of done) {
+    const task = taskById(taskId);
+    store.put('completion', uid('c'), { taskId, player, at: now - daysAgo * DAY - 3600_000, points: task.points, rescue: false, daily: taskId.startsWith('a-') });
+  }
+  for (const text of ['Ich koche dein Lieblingsessen', 'Frühstück ans Bett', 'Ein Abend ohne Abwasch']) {
+    store.put('voucher', uid('v'), { from: 'b', to: 'a', text, createdAt: now - 5 * DAY });
+  }
+  store.put('voucher', uid('v'), { from: 'a', to: 'b', text: 'Kinoabend, du suchst den Film aus', createdAt: now - 4 * DAY });
+}
+
 function openHousehold(code) {
   device.household = code;
   saveDevice();
@@ -822,8 +845,13 @@ document.addEventListener('change', e => {
 
 // ---------- Start ----------
 
-if (DEMO && !device.household) createHousehold('Matthes', '🧽', 'Hanna', '🫧');
+if (DEMO && !device.household) seedDemo();
 else if (device.household) openHousehold(device.household);
+if (DEMO) {
+  const q = new URLSearchParams(location.search);
+  ui.view = q.get('view') ?? ui.view;
+  ui.sheet = q.get('sheet');
+}
 render();
 
 if (CLOUD) {
