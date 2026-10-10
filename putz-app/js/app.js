@@ -1,4 +1,4 @@
-import { TASKS, AREAS, INTERVALS } from './tasks.js';
+import { TASKS, DAILY, AREAS, INTERVALS } from './tasks.js';
 import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, DAY, RULES, TEAM } from './game.js';
 import { createStore, cloudEnabled } from './store.js';
 
@@ -29,7 +29,7 @@ const fmtDate = ts => new Date(ts).toLocaleDateString('de-DE', { weekday: 'short
 const fmtDateTime = ts => new Date(ts).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
-const taskById = id => TASKS.find(t => t.id === id);
+const taskById = id => TASKS.find(t => t.id === id) ?? DAILY.find(t => t.id === id);
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function newHouseholdCode() {
@@ -169,6 +169,26 @@ function homeList(c) {
       ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>` : ''}` : ''}`;
 }
 
+function dailyCountToday(c, taskId) {
+  const midnight = new Date(c.now).setHours(0, 0, 0, 0);
+  return c.state.done.filter(x => x.taskId === taskId && x.at >= midnight).length;
+}
+
+function dailyBar(c) {
+  const btn = t => {
+    const n = dailyCountToday(c, t.id);
+    const full = n >= t.perDay;
+    return `<button class="daily${full ? ' full' : ''}" data-action="daily" data-id="${t.id}" ${full ? 'disabled' : ''}
+        aria-label="${esc(t.name)} erledigt, ${t.points} Punkte">
+      <span class="daily-icon">${t.icon}</span>
+      <span class="daily-name">${esc(t.name)}</span>
+      <span class="daily-meta">${full ? '✓ für heute' : `+${t.points}`} · ${n}/${t.perDay}</span>
+    </button>`;
+  };
+  return `<h3 class="sec">Alltag <span class="sec-hint">ein Tipp genügt</span></h3>
+    <div class="daily-row">${DAILY.map(btn).join('')}</div>`;
+}
+
 function vacationCard(c) {
   const pause = activePause(c.settings);
   if (!pause) return '';
@@ -223,6 +243,8 @@ function viewHome(c) {
           <span class="small">${avatar(me)} ${fmtNum(state.week[me.id])} · ${avatar(partner)} ${fmtNum(state.week[partner.id])}</span>
         </div>
       </section>
+
+      ${dailyBar(c)}
 
       ${picks ? `<button class="card banner" data-action="tab" data-view="rewards">🎁 <span><b>${picks === 1 ? 'Eine Überraschung' : `${picks} Überraschungen`} freigespielt!</b><br><span class="small">Jetzt verdeckt wählen</span></span></button>` : ''}
     </div>
@@ -603,20 +625,30 @@ function showToast(text, undo) {
 }
 
 function complete(taskId, playerId) {
+  const st = ctx().state.status[taskId];
+  logCompletion({ taskId, player: playerId, at: Date.now(), points: st.points, rescue: st.overdue });
+}
+
+function completeDaily(taskId) {
+  const task = DAILY.find(t => t.id === taskId);
+  if (dailyCountToday(ctx(), taskId) >= task.perDay) return;
+  logCompletion({ taskId, player: device.me, at: Date.now(), points: task.points, rescue: false, daily: true }, { quiet: true });
+}
+
+function logCompletion(data, { quiet = false } = {}) {
   const before = ctx();
-  const st = before.state.status[taskId];
-  const data = { taskId, player: playerId, at: Date.now(), points: st.points, rescue: st.overdue };
   const id = uid('c');
   ui.sheet = null;
-  showToast(`+${xpOf(data)} Punkte für ${esc(before.name(playerId).name)}${data.rescue ? ' · Rettung!' : ''}`, id);
+  showToast(`+${xpOf(data)} Punkte für ${esc(before.name(data.player).name)}${data.rescue ? ' · Rettung!' : ''}`, id);
   store.put('completion', id, data);
+  const playerId = data.player;
   const after = ctx();
   if (after.state.personal[playerId].level > before.state.personal[playerId].level) {
     ui.modal = { type: 'levelup', player: playerId, level: after.state.personal[playerId].level };
   } else if (after.state.teamLevel > before.state.teamLevel) {
     ui.modal = { type: 'teamup', level: after.state.teamLevel };
   }
-  celebrate();
+  if (!quiet || ui.modal) celebrate();
   render();
 }
 
@@ -639,6 +671,7 @@ const actions = {
   closeSheet: () => { ui.sheet = null; render(); },
   closeModal: () => { ui.modal = null; render(); },
   complete: d => complete(d.id, d.player),
+  daily: d => completeDaily(d.id),
   undo: d => { store.update(d.id, { deleted: true }); ui.toast = null; render(); },
   deleteCompletion: d => { if (confirm('Diesen Eintrag löschen? Die Punkte werden abgezogen.')) store.update(d.id, { deleted: true }); },
 

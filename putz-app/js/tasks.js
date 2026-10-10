@@ -9,6 +9,14 @@ export const AREAS = {
   robo:     { name: 'Roboter',   color: '#7D55B0', icon: '🤖' },
 };
 
+// Alltag: fällt (fast) täglich an. Kein Intervall, keine Fälligkeit, keine Minuspunkte,
+// nur ein Tipp auf der Startseite. Das Tageslimit verhindert Punkte-Sammeln durch Dauertippen.
+export const DAILY = [
+  { id: 'a-abwasch', icon: '🍽️', name: 'Abwaschen', points: 3, perDay: 2 },
+  { id: 'a-arbeitsflaeche', icon: '🧽', name: 'Arbeitsfläche abwischen', points: 2, perDay: 2 },
+  { id: 'a-spuelmaschine', icon: '⬇️', name: 'Geschirrspüler ausräumen', points: 2, perDay: 2 },
+];
+
 export const INTERVALS = {
   W:    { days: 7,  label: 'wöchentlich' },
   '2W': { days: 14, label: 'alle 2 Wochen' },
