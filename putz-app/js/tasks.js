@@ -30,7 +30,7 @@ const perBath = (id, interval, points, name) =>
 
 export const TASKS = [
   // Wöchentlich
-  t('k-arbeitsflaechen', 'kueche', 'W', 5, 'Arbeitsflächen abwischen'),
+  t('k-arbeitsflaechen', 'kueche', 'W', 10, 'Arbeitsflächen gründlich reinigen (alles abräumen)'),
   t('k-herd', 'kueche', 'W', 5, 'Herd reinigen'),
   t('k-spuele', 'kueche', 'W', 5, 'Spüle und Wasserhahn reinigen'),
   t('k-fronten', 'kueche', 'W', 5, 'Fronten und Griffe abwischen'),
