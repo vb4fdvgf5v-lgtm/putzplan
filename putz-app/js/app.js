@@ -8,6 +8,8 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 const PLAYER_COLORS = { a: '#2E6F73', b: '#C8553D' };
+// Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
+const APP_VERSION = '1.3';
 const SOON_MS = 7 * DAY;
 const DEFAULT_REWARDS ={ 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 
@@ -452,6 +454,7 @@ function viewSettings(c) {
     </div>
 
     <button class="btn ghost danger" data-action="leave">Auf diesem Gerät abmelden</button>
+    <p class="small muted version">Version ${APP_VERSION}</p>
   `;
 }
 

@@ -317,3 +317,5 @@ details[open] summary { margin-bottom: 8px; }
 .daily-meta { font-size: 11.5px; color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
 .daily.full { opacity: .55; box-shadow: none; }
 .daily.full .daily-meta { color: var(--good); }
+
+.version { text-align: center; margin-top: 4px; }
