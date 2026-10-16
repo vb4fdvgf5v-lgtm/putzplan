@@ -47,7 +47,7 @@ Alternative ohne Git: [Netlify Drop](https://app.netlify.com/drop), den Ordner i
 ### 3. Auf beide iPhones
 
 1. **Dein iPhone:** die Adresse in Safari öffnen → Haushalt anlegen → **Teilen → Zum Home-Bildschirm**.
-2. In der App unter **Einstellungen → Zweites Handy verbinden → Link teilen** den Link an deine Freundin schicken.
+2. In der App unter **Einstellungen → Partner einladen → Link teilen** den Link an deine Freundin schicken.
 3. **Ihr iPhone:** Link in Safari öffnen → **Beitreten** → **Teilen → Zum Home-Bildschirm**.
    Fragt die installierte App erneut nach dem Haushalt: unter „Haushalt beitreten“ den Code einfügen
    (Einstellungen → Code kopieren). Safari und Home-Bildschirm-App haben auf dem iPhone getrennten Speicher.
@@ -77,7 +77,7 @@ Nach Änderungen an Dateien die `VERSION` in [sw.js](sw.js) hochzählen, damit d
 
 | Datei | Inhalt |
 |---|---|
-| `index.html`, `styles.css` | Gerüst und Gestaltung, hell und dunkel |
+| `index.html`, `styles.css` | Gerüst und Gestaltung (nur Dunkelmodus), Schrift Figtree und Icons Material Symbols von Google Fonts |
 | `js/tasks.js` | Aufgabenkatalog mit Bereich, Intervall und Punkten |
 | `js/game.js` | Spielregeln: Frische, Abzüge, Level, Fairness; ohne DOM, mit Node testbar |
 | `js/store.js` | lokaler Speicher und Abgleich mit Supabase (eine Tabelle `items`) |

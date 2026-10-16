@@ -1,20 +1,21 @@
 // Aufgabenkatalog. Punkte = Schwierigkeit (Aufwand + Ekelfaktor), nicht Zeit.
 // Stufen: 3 Handgriff · 5 leicht · 10 normal · 15 lästig · 20 eklig/anstrengend · 30 groß · 50 Projekt
 
+// icon = Name aus Material Symbols Rounded. Farben gleich hell und satt, nur der Farbton wechselt.
 export const AREAS = {
-  kueche:   { name: 'Küche',     color: '#D9662B', icon: '🍳' },
-  bad:      { name: 'Bäder',     color: '#2F7BBF', icon: '🛁' },
-  wohnen:   { name: 'Wohnräume', color: '#3E8E54', icon: '🛋️' },
-  pflanzen: { name: 'Pflanzen',  color: '#7A9A1E', icon: '🪴' },
-  robo:     { name: 'Roboter',   color: '#7D55B0', icon: '🤖' },
+  kueche:   { name: 'Küche',     color: '#eaaa7f', icon: 'skillet' },
+  bad:      { name: 'Bäder',     color: '#7bc5ef', icon: 'bathtub' },
+  wohnen:   { name: 'Wohnräume', color: '#8ecc9a', icon: 'weekend' },
+  pflanzen: { name: 'Pflanzen',  color: '#b8c27a', icon: 'potted_plant' },
+  robo:     { name: 'Roboter',   color: '#c4adef', icon: 'robot_2' },
 };
 
 // Alltag: fällt (fast) täglich an. Kein Intervall, keine Fälligkeit, keine Minuspunkte,
 // nur ein Tipp auf der Startseite. Das Tageslimit verhindert Punkte-Sammeln durch Dauertippen.
 export const DAILY = [
-  { id: 'a-abwasch', icon: '🍽️', name: 'Abwaschen', points: 3, perDay: 2 },
-  { id: 'a-arbeitsflaeche', icon: '🧽', name: 'Arbeitsfläche abwischen', points: 2, perDay: 2 },
-  { id: 'a-spuelmaschine', icon: '⬇️', name: 'Geschirrspüler ausräumen', points: 2, perDay: 2 },
+  { id: 'a-abwasch', area: 'kueche', icon: 'soap', name: 'Abwaschen', points: 3, perDay: 2 },
+  { id: 'a-arbeitsflaeche', area: 'kueche', icon: 'countertops', name: 'Arbeitsfläche abwischen', points: 2, perDay: 2 },
+  { id: 'a-spuelmaschine', area: 'kueche', icon: 'dishwasher_gen', name: 'Geschirrspüler ausräumen', points: 2, perDay: 2 },
 ];
 
 export const INTERVALS = {

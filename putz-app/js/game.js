@@ -172,6 +172,40 @@ export function compute({ tasks, completions, settings, players, now }) {
   };
 }
 
+/** Je Bereich: Frische (0–1, gewichtet mit den Aufgabenpunkten), Gewicht = Punktsumme, Zahl der überfälligen Aufgaben. */
+export function areaSummary(tasks, status) {
+  const out = {};
+  for (const t of tasks) {
+    const s = status[t.id];
+    const a = out[t.area] ??= { weight: 0, freshness: 0, overdue: 0 };
+    a.weight += s.points;
+    a.freshness += s.points * s.freshness;
+    if (s.overdue) a.overdue++;
+  }
+  for (const a of Object.values(out)) a.freshness = a.weight ? a.freshness / a.weight : 1;
+  return out;
+}
+
+/** Die überfälligen Aufgaben, deren Rettung am meisten bringt: Punkte × überfällige Tage (gedeckelt). */
+export function focusTasks(tasks, status, n = 3) {
+  const score = t => status[t.id].points * Math.min(status[t.id].overdueDays, RULES.penaltyCapDays);
+  return tasks.filter(t => status[t.id].overdue)
+    .sort((a, b) => score(b) - score(a) || status[b.id].points - status[a.id].points)
+    .slice(0, n);
+}
+
+/** Punkte je Bereich und Person seit `from`. areaOf: Aufgaben-ID -> Bereich. */
+export function pointsByArea(done, from, areaOf, players) {
+  const out = {};
+  for (const c of done) {
+    const area = areaOf(c.taskId);
+    if (c.at < from || !area || !players.some(p => p.id === c.player)) continue;
+    out[area] ??= Object.fromEntries(players.map(p => [p.id, 0]));
+    out[area][c.player] += c.points;
+  }
+  return out;
+}
+
 /** Fairnessregel: Eine Teambelohnung lässt sich nur einlösen, wenn beide seit dem vorigen Teamlevel ≥ 1/3 beigetragen haben. */
 export function rewardFairness(state, level, players) {
   const from = state.teamReachedAt[level - 2] ?? Infinity;

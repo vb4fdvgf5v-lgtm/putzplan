@@ -2,7 +2,8 @@
 
 Gamifizierter Putzplan für zwei Personen als Web-App (PWA) auf zwei iPhones.
 Fachliche Regeln, Aufbau und Einrichtung stehen in [putz-app/README.md](putz-app/README.md).
-Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md).
+Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage vor 2.0). Umgesetztes Design 2.0:
+[design/handoff-v2/README.md](design/handoff-v2/README.md), Prototyp per Launch-Konfiguration `putz-design` (Port 8781), maßgeblich 3a, 4c, 5b, 7a.
 
 ## Arbeitsweise
 
@@ -20,6 +21,8 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md).
   nie die Firmenadresse). Pushen macht der Nutzer selbst über GitHub Desktop („Push origin"),
   auf diesem Mac ist kein GitHub-Login für die Kommandozeile eingerichtet. GitHub Pages
   veröffentlicht nach ca. 1 Minute unter https://vb4fdvgf5v-lgtm.github.io/putzplan/putz-app/.
+- **Icons:** Material Symbols, in `index.html` nur die verwendeten per `icon_names=` (alphabetisch).
+  Neues Icon in `app.js` oder `tasks.js` → dort ergänzen, sonst erscheint der Name als Text.
 - **Screenshots** für das Design-Briefing: `design/screenshots/`, erzeugt mit Chrome headless
   gegen `?demo` (Fensterbreite 500, da Chrome headless schmaler nicht kann).
 
@@ -53,8 +56,11 @@ Gestrichenes löschen, Neues mit sauberer ID anlegen).
 - Überraschungskarten vom Partner, verdeckt aus bis zu 3 ziehen
 - Urlaubsmodus pausiert die Uhr für den ganzen Haushalt
 - Alltag: 3 tägliche Ein-Tipp-Aufgaben, max. 2× pro Tag, keine Fälligkeit
+- Design 2.0: nur Dunkelmodus (Hellmodus vorerst nicht), Personen als Initiale mit wählbarer Farbe statt Emoji
+- Einladen: langer Haushaltscode bleibt (er ist der Schlüssel zu den Daten), Hauptweg ist der Link `?join=CODE`;
+  kein kurzer Code mit Ablauf. „Verbunden“ erkennt die App am Item `presence-<Spieler>`, das jedes Gerät einmal schreibt
 
 ## Ideen für später
 
 Urlaub mit Enddatum, Push-Erinnerungen, Putztipps in der Aufgabe, Abzeichen, Wochenziel mit Serie,
-„Haushalt löschen"-Knopf, Design-Überarbeitung (siehe Briefing).
+„Haushalt löschen"-Knopf, Hellmodus.

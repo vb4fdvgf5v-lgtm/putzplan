@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TASKS } from '../js/tasks.js';
-import { compute, DAY, rewardFairness, picksAvailable, levelInfo, PERSONAL } from '../js/game.js';
+import { compute, DAY, rewardFairness, picksAvailable, levelInfo, PERSONAL, areaSummary, focusTasks, pointsByArea } from '../js/game.js';
 
 const players = [{ id: 'a' }, { id: 'b' }];
 const start = Date.UTC(2026, 9, 1);
@@ -72,4 +72,41 @@ test('Urlaubsmodus: Abzüge vor der Pause bleiben', () => {
     settings: { startedAt: start, pauses: [{ from: start + 6.5 * DAY, to: null }] } });
   assert.equal(s.penaltyTotal, 3 * 2); // 3 volle Tage überfällig vor dem Urlaub
   assert.equal(s.status[wc.id].penaltyPerDay, 0);
+});
+
+test('Frische je Bereich ist nach Punkten gewichtet', () => {
+  const tasks = [{ id: 'x', area: 'bad' }, { id: 'y', area: 'bad' }, { id: 'z', area: 'kueche' }];
+  const status = {
+    x: { points: 30, freshness: 1, overdue: false },
+    y: { points: 10, freshness: 0, overdue: true },
+    z: { points: 5, freshness: 0.5, overdue: false },
+  };
+  const s = areaSummary(tasks, status);
+  assert.equal(s.bad.freshness, 0.75);
+  assert.equal(s.bad.weight, 40);
+  assert.equal(s.bad.overdue, 1);
+  assert.equal(s.kueche.overdue, 0);
+});
+
+test('Fokus: höchster Abzug zuerst, nur überfällige, Tage gedeckelt', () => {
+  const tasks = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id }));
+  const status = {
+    a: { points: 10, overdueDays: 2, overdue: true },   // 20
+    b: { points: 5, overdueDays: 30, overdue: true },   // 5 × 10 = 50
+    c: { points: 50, overdueDays: 0, overdue: true },   // 0, aber mehr Punkte als d
+    d: { points: 3, overdueDays: 0, overdue: true },
+    e: { points: 60, overdueDays: 0, overdue: false },
+  };
+  assert.deepEqual(focusTasks(tasks, status).map(t => t.id), ['b', 'a', 'c']);
+});
+
+test('Punkte je Bereich und Person', () => {
+  const done = [
+    { taskId: 'x', player: 'a', at: 5, points: 10 },
+    { taskId: 'x', player: 'b', at: 6, points: 10 },
+    { taskId: 'z', player: 'a', at: 7, points: 3 },
+    { taskId: 'x', player: 'a', at: 1, points: 99 }, // vor dem Zeitraum
+  ];
+  const areaOf = id => ({ x: 'bad', z: 'kueche' })[id];
+  assert.deepEqual(pointsByArea(done, 2, areaOf, players), { bad: { a: 10, b: 10 }, kueche: { a: 3, b: 0 } });
 });

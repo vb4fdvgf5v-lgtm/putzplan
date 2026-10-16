@@ -1,5 +1,6 @@
 import { TASKS, DAILY, AREAS, INTERVALS } from './tasks.js';
-import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, DAY, RULES, TEAM } from './game.js';
+import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, taskPoints,
+  areaSummary, focusTasks, pointsByArea, weekStart, monthStart, DAY, RULES, TEAM } from './game.js';
 import { createStore, cloudEnabled } from './store.js';
 
 const $app = document.getElementById('app');
@@ -7,16 +8,26 @@ const $app = document.getElementById('app');
 const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
-const PLAYER_COLORS = { a: '#2E6F73', b: '#C8553D' };
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '1.3';
-const SOON_MS = 7 * DAY;
-const DEFAULT_REWARDS ={ 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
+const APP_VERSION = '2.0';
+const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
+const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
+// Überschrift der Übersichtskarte, grammatisch passend je Bereich
+const NEEDS = { kueche: 'Die Küche braucht', bad: 'Die Bäder brauchen', wohnen: 'Die Wohnräume brauchen',
+  pflanzen: 'Die Pflanzen brauchen', robo: 'Der Roboter braucht' };
 
-const ui = { view: 'home', search: '', filter: 'all', showFresh: false, statsRange: 'week', sheet: null, modal: null, toast: null, error: null };
+const ui = {
+  view: 'home', search: '', openArea: null,
+  rewardsTab: 'me', editRewards: false, deck: null, flipped: null,
+  statsView: 'over', statsRange: 'week', histWho: 'all',
+  pointsArea: null, joinOpen: false, copied: false,
+  sheet: null, modal: null, toast: null, error: null,
+};
 let device = loadDevice();
 let store = null;
+let unsubscribe = null;
 let renderDeferred = false;
+let holdUntil = 0;
 
 // ---------- Hilfsfunktionen ----------
 
@@ -30,11 +41,17 @@ function saveDevice() {
 const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const fmtNum = n => Math.round(n).toLocaleString('de-DE');
 const fmtDec = n => n.toLocaleString('de-DE', { maximumFractionDigits: 1 });
-const fmtDate = ts => new Date(ts).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
-const fmtDateTime = ts => new Date(ts).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtDate = ts => new Date(ts).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' });
+const fmtDay = ts => new Date(ts).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const fmtTime = ts => new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+const fmtDateTime = ts => `${fmtDay(ts)}, ${fmtTime(ts)}`;
+const pct = x => Math.round(x * 100);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
 const taskById = id => TASKS.find(t => t.id === id) ?? DAILY.find(t => t.id === id);
+const areaOf = id => taskById(id)?.area;
+const iconOf = id => { const t = taskById(id); return t?.icon ?? AREAS[t?.area]?.icon ?? 'check'; };
+const startOfDay = ts => new Date(ts).setHours(0, 0, 0, 0);
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function newHouseholdCode() {
@@ -42,21 +59,28 @@ function newHouseholdCode() {
   return [...bytes].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('').match(/.{4}/g).join('-');
 }
 function normalizeCode(s) {
-  const c = String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const c = String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   return c.length === 20 ? c.match(/.{4}/g).join('-') : null;
 }
-
-function relDue(ms) {
-  const d = Math.ceil(ms / DAY);
-  return d <= 0 ? 'heute' : d === 1 ? 'morgen' : `in ${d} Tagen`;
+// Einladungslink: ?join=CODE (früher #join=CODE, wird weiter verstanden)
+function joinParam() {
+  return new URLSearchParams(location.search).get('join') ?? new URLSearchParams(location.hash.slice(1)).get('join') ?? '';
 }
+function cleanUrl() {
+  if (!joinParam()) return;
+  const q = new URLSearchParams(location.search);
+  q.delete('join');
+  const rest = q.toString().replace(/=(?=&|$)/g, ''); // ?demo statt ?demo=
+  history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+}
+const inviteLink = () => `${location.origin}${location.pathname}?join=${device.household}`;
 
 function syncLabel() {
   const s = store.status;
-  if (s === 'local') return 'Nur auf diesem Gerät';
-  if (s === 'ok') return 'Synchronisiert';
-  if (s === 'syncing' || s === 'idle') return 'Synchronisiere …';
-  if (s === 'offline') return 'Offline, wird nachgeholt';
+  if (s === 'local') return 'nur auf diesem Gerät';
+  if (s === 'ok') return 'alles synchron';
+  if (s === 'syncing' || s === 'idle') return 'synchronisiere …';
+  if (s === 'offline') return 'offline, wird nachgeholt';
   return 'Sync-Fehler';
 }
 
@@ -75,58 +99,58 @@ function ctx() {
   };
 }
 
-// ---------- Icons ----------
-
-const ICONS = {
-  home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/>',
-  gift: '<rect x="3.5" y="8.5" width="17" height="4" rx="1"/><path d="M5 12.5v8h14v-8M12 8.5v12"/><path d="M12 8.5c-1.5-3.5-5.5-4-5.5-1.5S10 8.5 12 8.5c2 0 5.5 1 5.5-1.5S13.5 5 12 8.5Z"/>',
-  chart: '<path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
-};
-const icon = name => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
-
 // ---------- Bausteine ----------
 
+const ms = (name, cls = '') => `<span class="ms ${cls}" aria-hidden="true">${name}</span>`;
+const colorIndex = p => p.color ?? (p.id === 'a' ? 0 : 1);
+const pColor = p => `var(--swatch-${colorIndex(p) + 1})`;
+const initial = p => esc((p?.name?.trim()?.[0] ?? '?').toUpperCase());
+const avatar = (p, cls = '') => `<span class="avatar ${cls}" style="--pc:${pColor(p)}">${initial(p)}</span>`;
+const avatars = c => `<div class="avatars">${avatar(c.me)}${avatar(c.partner)}</div>`;
+const tile = (area, size = '', icon = AREAS[area].icon) =>
+  `<span class="tile ${size}" style="--ac:var(--area-${area})">${ms(icon)}</span>`;
+const sec = (title, hint = '') => `<div class="sec"><h3>${title}</h3>${hint}</div>`;
+const hint = text => `<span>${text}</span>`;
 const bar = (progress, color) =>
-  `<div class="bar"><span style="width:${Math.round(progress * 100)}%;${color ? `background:${color}` : ''}"></span></div>`;
+  `<div class="bar"><span style="width:${pct(Math.max(0, Math.min(1, progress)))}%;${color ? `background:${color}` : ''}"></span></div>`;
+const segmented = (items, current, action, cls = '') =>
+  `<div class="seg ${cls}">${items.map(([val, label, badge]) => `<button class="${val === current ? 'on' : ''}" data-action="${action}" data-val="${val}">
+    ${label}${badge ? `<span class="badge">${badge}</span>` : ''}</button>`).join('')}</div>`;
 
-function ring(pct) {
-  const r = 42, circ = 2 * Math.PI * r;
-  const tone = pct >= 70 ? 'var(--good)' : pct >= 40 ? 'var(--warn)' : 'var(--bad)';
-  return `<svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
-    <circle cx="50" cy="50" r="${r}" class="ring-bg"/>
-    <circle cx="50" cy="50" r="${r}" class="ring-fg" style="stroke:${tone}"
-      stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - pct / 100)}"/>
-  </svg>`;
-}
-
-function avatar(p) {
-  return `<span class="avatar" style="--pc:${PLAYER_COLORS[p.id]}">${esc(p.emoji || p.name[0])}</span>`;
-}
-
-function taskRow(t, st, now, paused = false) {
-  const a = AREAS[t.area];
-  let note;
-  if (st.overdue) {
-    note = `<span class="bad">überfällig ${st.overdueDays ? `seit ${plural(st.overdueDays, 'Tag', 'Tagen')}` : 'seit heute'}</span>` +
-           (st.penaltyPerDay ? ` · −${fmtDec(st.penaltyPerDay)} Team/Tag` : paused ? ' · pausiert' : '');
-  } else if (now < st.earlyUntil) {
-    note = `frisch · wieder ab ${fmtDate(st.earlyUntil)}`;
-  } else {
-    note = `fällig ${relDue(st.due - now)}`;
+function dueMeta(s, now, paused) {
+  if (s.overdue) {
+    const days = s.overdueDays ? `${plural(s.overdueDays, 'Tag', 'Tage')} überfällig` : 'seit heute überfällig';
+    const cost = paused ? ' · pausiert' : s.penaltyPerDay ? ` · −${fmtDec(s.penaltyPerDay)}/Tag` : '';
+    return `<span class="od">${days}</span>${cost}`;
   }
-  return `<button class="task${st.overdue ? ' is-overdue' : ''}" data-action="open" data-id="${t.id}" style="--c:${a.color}">
-    <span class="task-icon">${a.icon}</span>
-    <span class="task-main">
-      <span class="task-name">${esc(t.name)}</span>
-      <span class="task-note">${note}</span>
-      <span class="fresh"><span style="width:${Math.round(st.freshness * 100)}%"></span></span>
-    </span>
-    <span class="pts">${st.points}</span>
-  </button>`;
+  if (now < s.earlyUntil) return `frisch · wieder ab ${fmtDate(s.earlyUntil)}`;
+  const d = Math.ceil((s.due - now) / DAY);
+  return d <= 0 ? 'heute fällig' : d === 1 ? 'morgen fällig' : `in ${d} Tagen fällig`;
 }
 
-// ---------- Ansichten ----------
+const ptsButton = (t, s, now, cls = '') => {
+  const early = now < s.earlyUntil;
+  return `<button class="pts ${cls}" data-action="quick" data-id="${t.id}" ${early ? 'disabled' : ''}
+    aria-label="${esc(t.name)} erledigt, ${s.points} Punkte">+${s.points}</button>`;
+};
+
+// Aufgabenzeile in der Bereichsliste und in den Suchtreffern: Name öffnet das Sheet, Pille erledigt direkt.
+const taskLine = (t, c) => {
+  const s = c.state.status[t.id];
+  return `<div class="atask">
+    <button class="tmain" data-action="open" data-id="${t.id}">
+      <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(s, c.now, c.state.paused)}</span>
+    </button>${ptsButton(t, s, c.now, 'sm')}</div>`;
+};
+
+function vacationBanner(c) {
+  const pause = activePause(c.settings);
+  if (!pause) return '';
+  const since = startOfDay(pause.from) === startOfDay(c.now) ? 'heute' : fmtDate(pause.from);
+  return `<div class="banner-vac">${ms('beach_access')}Urlaub · die Uhr steht seit ${since}</div>`;
+}
+
+// ---------- Heute ----------
 
 // Suche: Groß/Klein und Umlaute egal („spuele“ findet „Spüle“), alle Wörter müssen vorkommen.
 const fold = s => String(s).toLowerCase()
@@ -137,324 +161,509 @@ function matchesSearch(t, query) {
   return fold(query).split(/\s+/).filter(Boolean).every(word => hay.includes(word));
 }
 
-function homeList(c) {
-  const { state, now } = c;
-  const st = id => state.status[id];
+function searchResults(c) {
   const query = ui.search.trim();
-
-  if (query) {
-    const order = t => (st(t.id).overdue ? 0 : now >= st(t.id).earlyUntil ? 1 : 2);
-    const hits = TASKS.filter(t => matchesSearch(t, query))
-      .sort((a, b) => order(a) - order(b) || st(a.id).due - st(b.id).due);
-    return hits.length
-      ? `<h3 class="sec">Treffer <span>${hits.length}</span></h3><div class="list">${hits.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>`
-      : `<p class="muted pad">Keine Aufgabe passt zu „${esc(query)}“. Versuch ein anderes Wort, z. B. „Bad“ oder „Fenster“.</p>`;
-  }
-
-  const inFilter = t => ui.filter === 'all' || (ui.filter === 'W' ? t.interval === 'W' || t.interval === '2W' : t.interval === ui.filter);
-  const tasks = TASKS.filter(inFilter);
-  const overdue = tasks.filter(t => st(t.id).overdue)
-    .sort((a, b) => st(b.id).overdueDays * st(b.id).points - st(a.id).overdueDays * st(a.id).points);
-  const byDue = (a, b) => st(a.id).due - st(b.id).due || st(b.id).points - st(a.id).points;
-  const isSoon = t => !st(t.id).overdue && now >= st(t.id).earlyUntil && st(t.id).due - now <= SOON_MS;
-  const ready = tasks.filter(isSoon).sort(byDue);
-  const fresh = tasks.filter(t => !st(t.id).overdue && !isSoon(t)).sort(byDue);
-
-  const chip = (val, label) => `<button class="chip${ui.filter === val ? ' on' : ''}" data-action="filter" data-val="${val}">${label}</button>`;
-  const section = (title, list, cls = '') => list.length
-    ? `<h3 class="sec ${cls}">${title} <span>${list.length}</span></h3><div class="list">${list.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>`
-    : '';
-
-  return `
-    <div class="chips">${chip('all', 'Alle')}${chip('W', 'Woche')}${chip('M', 'Monat')}${chip('Q', 'Quartal')}</div>
-    ${section('Überfällig', overdue, 'bad')}
-    ${section('Bald fällig', ready)}
-    ${!overdue.length && !ready.length ? '<p class="muted small pad">In den nächsten 7 Tagen ist nichts fällig.</p>' : ''}
-    ${fresh.length ? `<button class="sec toggle" data-action="toggleFresh">Später <span>${fresh.length}</span> ${ui.showFresh ? '▲' : '▼'}</button>
-      ${ui.showFresh ? `<div class="list">${fresh.map(t => taskRow(t, st(t.id), now, state.paused)).join('')}</div>` : ''}` : ''}`;
+  if (!query) return '';
+  const st = id => c.state.status[id];
+  const order = t => (st(t.id).overdue ? 0 : c.now >= st(t.id).earlyUntil ? 1 : 2);
+  const hits = TASKS.filter(t => matchesSearch(t, query))
+    .sort((a, b) => order(a) - order(b) || st(a.id).due - st(b.id).due);
+  return hits.length
+    ? hits.map(t => taskLine(t, c)).join('')
+    : `<p class="none">Nichts zu „${esc(query)}“. Versuch es mit „Bad“ oder „Fenster“.</p>`;
 }
 
 function dailyCountToday(c, taskId) {
-  const midnight = new Date(c.now).setHours(0, 0, 0, 0);
+  const midnight = startOfDay(c.now);
   return c.state.done.filter(x => x.taskId === taskId && x.at >= midnight).length;
 }
 
-function dailyBar(c) {
-  const btn = t => {
+function viewHome(c) {
+  const { state, me, now } = c;
+  const st = id => state.status[id];
+  const pi = state.personal[me.id];
+  const areas = areaSummary(TASKS, state.status);
+  const keys = Object.keys(AREAS);
+  const totalWeight = keys.reduce((s, k) => s + areas[k].weight, 0);
+  const behind = keys.filter(k => areas[k].overdue).length;
+  const overdueTotal = TASKS.filter(t => st(t.id).overdue).length;
+  const worst = keys.reduce((a, b) => (areas[b].freshness < areas[a].freshness ? b : a));
+  const headline = state.paused ? 'Urlaub. Die Uhr steht, nichts wird überfällig.'
+    : areas[worst].freshness >= 0.9 ? 'Alles frisch. Stark!'
+    : `${NEEDS[worst]} euch gerade am meisten`;
+  const ti = state.teamInfo;
+  const nextReward = c.rewards.find(r => r.level === ti.level + 1)?.text || `Team-Level ${ti.level + 1}`;
+  const date = new Date(now).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const segment = k => {
+    const f = areas[k].freshness;
+    return `<button class="${ui.openArea === k ? 'on' : ''}" data-action="openArea" data-val="${k}" data-scroll="1"
+        style="--w:${areas[k].weight / totalWeight};--ac:var(--area-${k});--dim:var(--area-${k}-dim)"
+        aria-label="${AREAS[k].name}: ${pct(f)} % frisch">
+      <span class="fill" style="height:${pct(f)}%"></span>${ms(AREAS[k].icon, f > 0.72 ? 'ink' : '')}</button>`;
+  };
+
+  const dailyTile = t => {
     const n = dailyCountToday(c, t.id);
     const full = n >= t.perDay;
-    return `<button class="daily${full ? ' full' : ''}" data-action="daily" data-id="${t.id}" ${full ? 'disabled' : ''}
-        aria-label="${esc(t.name)} erledigt, ${t.points} Punkte">
-      <span class="daily-icon">${t.icon}</span>
-      <span class="daily-name">${esc(t.name)}</span>
-      <span class="daily-meta">${full ? '✓ für heute' : `+${t.points}`} · ${n}/${t.perDay}</span>
+    return `<button class="daily" data-action="daily" data-id="${t.id}" ${full ? 'disabled' : ''}
+        aria-label="${esc(t.name)} erledigt, ${t.points} Punkte, heute ${n} von ${t.perDay}">
+      <span class="circle">${ms(t.icon)}</span>
+      <span class="name">${esc(t.name)}</span>
+      <span class="meta">+${t.points}${Array.from({ length: t.perDay }, (_, i) => `<i class="dot${i < n ? ' on' : ''}"></i>`).join('')}</span>
     </button>`;
   };
-  return `<h3 class="sec">Alltag <span class="sec-hint">ein Tipp genügt</span></h3>
-    <div class="daily-row">${DAILY.map(btn).join('')}</div>`;
-}
 
-function vacationCard(c) {
-  const pause = activePause(c.settings);
-  if (!pause) return '';
-  return `<section class="card vacation">
-    <div class="vacation-icon" aria-hidden="true">🏖️</div>
-    <div class="vacation-text"><b>Urlaubsmodus seit ${fmtDate(pause.from)}</b>
-      <span class="small muted">Die Putz-Uhr steht. Nichts wird überfällig, es gibt keine Minuspunkte. Abhaken geht trotzdem.</span></div>
-    <button class="btn small primary" data-action="endVacation">Beenden</button>
-  </section>`;
-}
+  let focus = focusTasks(TASKS, state.status);
+  let focusTitle = 'Lohnt sich jetzt', focusHint = `Rettung +${pct(RULES.rescueBonus)} %`;
+  if (!focus.length) {
+    focus = TASKS.filter(t => now >= st(t.id).earlyUntil).sort((a, b) => st(a.id).due - st(b.id).due).slice(0, 3);
+    focusTitle = 'Als Nächstes';
+    focusHint = 'nichts überfällig';
+  }
+  const focusRow = t => `<div class="frow">${tile(t.area)}
+      <button class="tmain" data-action="open" data-id="${t.id}">
+        <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(st(t.id), now, state.paused)}</span>
+      </button>${ptsButton(t, st(t.id), now)}</div>`;
 
-function viewHome(c) {
-  const { state, me, partner } = c;
-  const picks = picksAvailable(state, me.id, c.vouchers);
-  const ti = state.teamInfo;
-  const weekTotal = state.week[me.id] + state.week[partner.id];
-  const overdueCount = TASKS.filter(t => state.status[t.id].overdue).length;
+  const areaRow = k => {
+    const open = ui.openArea === k;
+    const tasks = TASKS.filter(t => t.area === k).sort((a, b) => st(a.id).due - st(b.id).due);
+    const status = areas[k].overdue ? `<span class="od">${areas[k].overdue} überfällig</span>` : 'alles im Plan';
+    return `<div id="area-${k}" class="${open ? 'open' : ''}">
+      <button class="acc-head" data-action="openArea" data-val="${k}" aria-expanded="${open}">
+        ${tile(k)}
+        <span class="grow"><span class="line1"><b>${AREAS[k].name}</b><span>${status}</span></span>
+          ${bar(areas[k].freshness, `var(--area-${k})`)}</span>
+        ${ms('expand_more', 'chev outline')}
+      </button>
+      ${open ? `<div class="acc-body">${tasks.map(t => taskLine(t, c)).join('')}</div>` : ''}
+    </div>`;
+  };
 
   return `
-    <header class="top">
-      <div><div class="hello">Hallo ${esc(me.name)} ${esc(me.emoji)}</div><div class="sync s-${esc(store.status.split(':')[0])}">${DEMO ? 'Demo · nicht mit eurem Haushalt verbunden' : syncLabel()}</div></div>
-      ${avatar(me)}
+    ${vacationBanner(c)}
+    <header class="hello-head">
+      <div class="hello-row">
+        <div><div class="date">${date}</div><div class="hello">Hallo ${esc(me.name)}</div></div>
+        <div class="hello-right">
+          <span class="lvl-chip"><span class="star">${ms('star')}</span>Level ${pi.level}</span>
+          ${avatars(c)}
+        </div>
+      </div>
+      <div class="lvl-line">
+        <div><b>${personalTitle(pi.level)}</b><span>noch ${fmtNum(pi.next - state.xp[me.id])} bis Level ${pi.level + 1}</span></div>
+        ${bar(pi.progress)}
+      </div>
     </header>
 
-    <div class="search">
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
-      <input id="search" type="search" enterkeyhint="search" autocomplete="off" placeholder="Was hast du gemacht? z. B. Spüle"
-        value="${esc(ui.search)}" aria-label="Aufgabe suchen">
-      <button class="x" data-action="clearSearch" aria-label="Suche leeren" ${ui.search ? '' : 'hidden'}>×</button>
-    </div>
+    <section class="card overview">
+      <div class="ov-top"><b>Wohnung</b><span>${behind} von ${keys.length} mit Rückstand</span></div>
+      <h2>${headline}</h2>
+      <div class="levels">${keys.map(segment).join('')}</div>
+      <span class="hint">Je voller, desto frischer · antippen zum Öffnen</span>
+      <div class="kpis">
+        <div><b class="od">${overdueTotal}</b><span>überfällig</span></div>
+        <div><b>${state.penaltyPerDayNow ? `−${fmtDec(state.penaltyPerDayNow)}` : '0'}</b><span>Team pro Tag</span></div>
+        <div><b style="color:var(--accent)">${fmtNum(ti.next - state.teamScore)}</b><span>bis ${esc(nextReward)}</span></div>
+      </div>
+    </section>
 
-    <div id="home-cards" ${ui.search.trim() ? 'hidden' : ''}>
-      ${vacationCard(c)}
-      <section class="card hero">
-        ${ring(state.cleanliness)}
-        <div class="hero-text">
-          <div class="big">${state.cleanliness} %</div>
-          <div class="muted">der Wohnung sind frisch</div>
-          ${state.paused
-            ? '<div class="small vacation-ink">Urlaubsmodus: alles pausiert</div>'
-            : overdueCount
-            ? `<div class="bad small">${plural(overdueCount, 'Aufgabe', 'Aufgaben')} überfällig · −${fmtDec(state.penaltyPerDayNow)} Pkt/Tag</div>`
-            : '<div class="good small">Nichts überfällig. Stark!</div>'}
-        </div>
-      </section>
+    <section class="stack">
+      ${sec('Alltag', hint('ein Tipp genügt'))}
+      <div class="daily-row">${DAILY.map(dailyTile).join('')}</div>
+    </section>
 
-      <section class="card">
-        <div class="row-between"><b>Team-Level ${ti.level}</b><span class="muted small">${fmtNum(state.teamScore)} / ${fmtNum(ti.next)}</span></div>
-        ${bar(ti.progress)}
-        <div class="week">
-          <span class="muted small">Diese Woche ${fmtNum(weekTotal)} Pkt</span>
-          <span class="small">${avatar(me)} ${fmtNum(state.week[me.id])} · ${avatar(partner)} ${fmtNum(state.week[partner.id])}</span>
-        </div>
-      </section>
+    <section class="stack">
+      ${sec(focusTitle, hint(focusHint))}
+      <div class="stack-8">${focus.length ? focus.map(focusRow).join('') : '<p class="empty">Gerade ist alles frisch. Genießt es!</p>'}</div>
+    </section>
 
-      ${dailyBar(c)}
-
-      ${picks ? `<button class="card banner" data-action="tab" data-view="rewards">🎁 <span><b>${picks === 1 ? 'Eine Überraschung' : `${picks} Überraschungen`} freigespielt!</b><br><span class="small">Jetzt verdeckt wählen</span></span></button>` : ''}
-    </div>
-
-    <div id="home-list">${homeList(c)}</div>
+    <section class="stack">
+      ${sec('Bereiche', hint(`${overdueTotal} überfällig`))}
+      <div class="card area-list rows">${keys.map(areaRow).join('')}</div>
+    </section>
   `;
+}
+
+function dockHtml(c) {
+  const search = ui.view === 'home' ? `
+    <div id="search-results" class="results" ${ui.search.trim() ? '' : 'hidden'}>${searchResults(c)}</div>
+    <label class="search">${ms('search', 'outline')}
+      <input id="search" type="search" enterkeyhint="search" autocomplete="off" placeholder="Was hast du gemacht?"
+        value="${esc(ui.search)}" aria-label="Aufgabe suchen">
+      <button class="icon-btn" data-action="clearSearch" aria-label="Suche leeren" ${ui.search ? '' : 'hidden'}>${ms('close')}</button>
+    </label>` : '';
+  const picks = picksAvailable(c.state, c.me.id, c.vouchers);
+  const tab = (view, ic, label, badge) => `<button class="tab${ui.view === view ? ' on' : ''}" data-action="tab" data-view="${view}">
+    ${ms(ic)}${badge ? `<span class="tab-badge">${badge}</span>` : ''}<span>${label}</span></button>`;
+  return `<nav class="dock">${search}<div class="tabbar">${tab('home', 'home', 'Heute')}${tab('rewards', 'redeem', 'Belohnungen', picks)}${tab('stats', 'bar_chart', 'Statistik')}${tab('settings', 'settings', 'Einstellungen')}</div></nav>`;
+}
+
+// ---------- Belohnungen ----------
+
+function rewardIcon(text) {
+  const t = fold(text ?? '');
+  if (t.includes('pizza')) return 'local_pizza';
+  if (t.includes('kino') || t.includes('film')) return 'movie';
+  if (t.includes('essen') || t.includes('restaurant')) return 'restaurant';
+  if (t.includes('ausflug') || t.includes('wochenende') || t.includes('urlaub')) return 'landscape';
+  return 'redeem';
+}
+
+const FAN = { 1: [[0, 0, 0]], 2: [[-46, 10, -6], [46, 10, 6]], 3: [[-78, 18, -10], [0, 0, 0], [78, 18, 10]] };
+
+function stageHtml(c) {
+  const { state, me, partner, vouchers } = c;
+  const picks = picksAvailable(state, me.id, vouchers);
+  const pool = vouchers.filter(v => v.to === me.id && !v.pickedAt);
+  const flipped = ui.flipped ? vouchers.find(v => v.id === ui.flipped) : null;
+  const canPick = !flipped && picks > 0 && pool.length > 0;
+  if (canPick && (!ui.deck || ui.deck.length < Math.min(3, pool.length) || ui.deck.some(id => !pool.some(v => v.id === id)))) {
+    ui.deck = shuffle(pool).slice(0, 3).map(v => v.id);
+  }
+  const deck = flipped ? ui.deck ?? [flipped.id] : canPick ? ui.deck : [null, null, null];
+  const fan = FAN[deck.length];
+  const pi = state.personal[me.id];
+
+  const card = (id, i) => {
+    const [x, y, r] = fan[i];
+    const v = id && vouchers.find(x => x.id === id);
+    const sel = flipped && id === flipped.id;
+    const cls = sel ? 'sel' : flipped ? 'dim' : canPick ? '' : 'locked';
+    return `<button class="pcard ${cls}" style="--x:${x}px;--y:${y}px;--r:${r}deg;z-index:${sel ? 5 : i === 1 ? 2 : 1}"
+        ${canPick ? `data-action="flip" data-id="${id}" aria-label="Karte ${i + 1} umdrehen"` : 'disabled aria-hidden="true"'}>
+      <span class="pcard-inner">
+        <span class="face back"><span>${ms(canPick ? 'touch_app' : 'lock')}</span></span>
+        <span class="face front"><small>Von ${esc(partner.name)}</small><b>${esc(v?.text ?? '')}</b>${ms('favorite')}</span>
+      </span></button>`;
+  };
+
+  let title, sub, extra = '';
+  if (flipped) {
+    title = 'Glückwunsch!';
+    sub = 'Löse sie ein, wann immer du magst.';
+    extra = `<button class="pill primary" data-action="keepCard">${ms('check')}In meine Karten</button>`;
+  } else if (canPick) {
+    title = picks > 1 ? `Zieh eine Karte · ${picks} frei` : 'Zieh eine Karte';
+    sub = `${esc(partner.name)} hat sie verdeckt für dich hinterlegt. Eine davon gehört dir.`;
+  } else if (picks > 0) {
+    title = 'Karte freigespielt!';
+    sub = `${esc(partner.name)} hat noch nichts in den Topf gelegt. Sag Bescheid!`;
+  } else {
+    title = `Nächste Karte bei Level ${pi.level + 1}`;
+    sub = `Noch ${fmtNum(pi.next - state.xp[me.id])} Punkte. ${pool.length
+      ? `${esc(partner.name)} hat schon ${pool.length === 1 ? 'eine Karte' : 'Karten'} für dich hinterlegt.`
+      : `${esc(partner.name)} hat noch nichts hinterlegt.`}`;
+    extra = bar(pi.progress);
+  }
+  return `<section class="stage">
+      <div class="stage-cards">${deck.map(card).join('')}</div>
+      <div class="stage-text"><h2>${title}</h2><p>${sub}</p>${extra}</div>
+    </section>`;
 }
 
 function viewRewards(c) {
-  const { state, me, partner, vouchers, rewards } = c;
+  const { state, me, partner, vouchers, rewards, players } = c;
   const picks = picksAvailable(state, me.id, vouchers);
-  const pool = vouchers.filter(v => v.to === me.id && !v.pickedAt);
-  const mine = vouchers.filter(v => v.to === me.id && v.pickedAt).sort((a, b) => b.pickedAt - a.pickedAt);
-  const open = mine.filter(v => !v.redeemedAt), used = mine.filter(v => v.redeemedAt);
   const fromMe = vouchers.filter(v => v.from === me.id).sort((a, b) => b.createdAt - a.createdAt);
-  const partnerPool = fromMe.filter(v => !v.pickedAt).length;
-  const pi = state.personal[me.id];
+  const partnerPool = fromMe.filter(v => !v.pickedAt);
 
-  const surprise = picks
-    ? `<div class="card banner static">🎁 <span><b>${picks === 1 ? 'Eine Überraschung' : `${picks} Überraschungen`} freigespielt</b><br>
-        ${pool.length ? `<span class="small">${esc(partner.name)} hat ${plural(pool.length, 'Karte', 'Karten')} für dich im Topf.</span>`
-                      : `<span class="small">${esc(partner.name)} hat noch nichts hinterlegt. Sag Bescheid!</span>`}</span></div>
-       ${pool.length ? '<button class="btn primary" data-action="pickStart">Karte verdeckt wählen</button>' : ''}`
-    : `<p class="muted">Nächste Überraschung bei Level ${pi.level + 1}: noch ${fmtNum(pi.next - state.xp[me.id])} Punkte.</p>`;
+  let body;
+  if (ui.rewardsTab === 'me') {
+    const mine = vouchers.filter(v => v.to === me.id && v.pickedAt && v.id !== ui.flipped)
+      .sort((a, b) => Boolean(a.redeemedAt) - Boolean(b.redeemedAt) || b.pickedAt - a.pickedAt);
+    const open = mine.filter(v => !v.redeemedAt).length;
+    body = `${stageHtml(c)}
+      <section class="stack">
+        ${sec('Deine Karten', hint(`${open} offen`))}
+        <div class="stack-8">${mine.length ? mine.map(v => `<div class="vrow${v.redeemedAt ? ' used' : ''}">
+            <span class="mini-card">${ms('redeem')}</span>
+            <span class="tmain"><span class="tname">${esc(v.text)}</span>
+              <span class="tmeta">${v.redeemedAt ? `eingelöst · von ${esc(partner.name)}` : `von ${esc(partner.name)} · gezogen ${fmtDate(v.pickedAt)}`}</span></span>
+            ${v.redeemedAt ? '' : `<button class="pill" data-action="redeemVoucher" data-id="${v.id}">Einlösen</button>`}
+          </div>`).join('') : `<p class="empty">${ui.flipped || picks ? 'Gezogene Karten landen hier, bis ihr sie einlöst.' : 'Noch keine Karten gezogen. Die erste gibt es beim nächsten Level.'}</p>`}</div>
+      </section>`;
+  } else if (ui.rewardsTab === 'partner') {
+    const n = partnerPool.length;
+    const gone = fromMe.filter(v => v.pickedAt);
+    body = `<section class="card pad stack" style="gap:14px">
+        <div class="pot-head"><h2>Für ${esc(partner.name)} in den Topf</h2>
+          <span class="slots">${[0, 1, 2].map(i => `<i class="${i < n ? 'on' : ''}"></i>`).join('')}${n >= 3 ? `${n} im Topf` : `${n} von 3`}</span></div>
+        <p class="tmeta" style="margin-top:-6px;line-height:1.4">${esc(partner.name)} zieht bei jedem Levelaufstieg eine von bis zu drei verdeckten Karten und sieht den Text erst dann. Drei oder mehr sind ideal.</p>
+        <div class="add-row">
+          <input id="voucher-text" class="field" maxlength="200" enterkeyhint="done" placeholder="z. B. Ich koche dein Lieblingsessen" aria-label="Neuer Gutschein">
+          <button class="round-add" data-action="addVoucher" disabled aria-label="In den Topf legen">${ms('add')}</button>
+        </div>
+        ${partnerPool.length || gone.length ? `<div>${partnerPool.map(v => `<div class="pot-row"><span class="stripe"></span><span>${esc(v.text)}</span>
+            <button class="icon-btn del" data-action="deleteVoucher" data-id="${v.id}" aria-label="Aus dem Topf nehmen">${ms('close', 'outline')}</button></div>`).join('')}
+          ${gone.map(v => `<div class="pot-row"><span class="stripe gone"></span><span class="muted">${esc(v.text)}</span><small>${v.redeemedAt ? 'eingelöst' : 'gezogen'}</small></div>`).join('')}</div>` : ''}
+      </section>
+      <div class="note-dashed">${ms('visibility_off')}${esc(partner.name)} sieht nur, wie viele Karten im Topf liegen, nicht was darauf steht.</div>`;
+  } else {
+    const nextLevel = state.teamLevel + 1;
+    const f = rewardFairness(state, nextLevel, players);
+    const shareMe = f.total ? f.pts[me.id] / f.total : 0.5;
+    const fairMsg = !f.total ? '<span>Noch keine Punkte</span>'
+      : f.ok ? '<span class="ok">Ja, beide über einem Drittel</span>'
+      : `<span class="no">${esc(c.name(f.missing[0].player).name)} fehlen noch ${fmtNum(f.missing[0].need)} Punkte</span>`;
+    const levels = Array.from({ length: Math.max(5, state.teamLevel + 2) - 1 }, (_, i) => i + 2);
 
-  const teamLevels = Array.from({ length: Math.max(5, state.teamLevel + 2) - 1 }, (_, i) => i + 2);
-  const rewardRow = level => {
-    const r = rewards.find(x => x.level === level);
-    let status;
-    if (r?.redeemedAt) status = `<span class="good small">✓ eingelöst am ${fmtDate(r.redeemedAt)}</span>`;
-    else if (state.teamLevel >= level) {
-      const f = rewardFairness(state, level, c.players);
-      status = f.ok
-        ? (r?.text ? `<button class="btn small primary" data-action="redeemReward" data-level="${level}">Einlösen</button>` : '<span class="small muted">freigeschaltet</span>')
-        : `<span class="small warn">Fast! Noch ${f.missing.map(m => `${fmtNum(m.need)} Pkt von ${esc(c.name(m.player).name)}`).join(', ')}</span>`;
-    } else status = `<span class="small muted">ab ${fmtNum(threshold(TEAM, level))} Teampunkten</span>`;
-    return `<div class="reward${state.teamLevel >= level ? ' unlocked' : ''}">
-      <span class="lvl">${level}</span>
-      <button class="reward-text" data-action="editReward" data-level="${level}">${r?.text ? esc(r.text) : '<span class="muted">Belohnung festlegen …</span>'}</button>
-      <div class="reward-status">${status}</div>
-    </div>`;
-  };
+    const ticket = level => {
+      const r = rewards.find(x => x.level === level);
+      const at = threshold(TEAM, level);
+      const reached = state.teamLevel >= level, next = level === nextLevel;
+      let cls = '', sub, extra = '';
+      if (r?.redeemedAt) { cls = 'done'; sub = `eingelöst am ${fmtDate(r.redeemedAt)}`; }
+      else if (reached) {
+        const fr = rewardFairness(state, level, players);
+        sub = fr.ok ? 'erreicht · bereit zum Einlösen' : `erreicht · <span class="warn">noch ${fr.missing.map(m => `${fmtNum(m.need)} Punkte von ${esc(c.name(m.player).name)}`).join(', ')}</span>`;
+        if (!ui.editRewards) extra = `<button class="pill" data-action="redeemReward" data-level="${level}" ${fr.ok && r?.text ? '' : 'disabled'}>Einlösen</button>`;
+      } else if (next) {
+        cls = 'next';
+        sub = `ab ${fmtNum(at)} Teampunkten · noch ${fmtNum(at - state.teamScore)}`;
+        extra = bar(state.teamInfo.progress);
+      } else sub = `ab ${fmtNum(at)} Teampunkten`;
+      const tag = ui.editRewards ? 'button' : 'div';
+      return `<${tag} class="ticket ${cls}" ${ui.editRewards ? `data-action="editReward" data-level="${level}"` : ''}>
+        <span class="stub">${ms(rewardIcon(r?.text))}<b>LV ${level}</b></span>
+        <span class="body"><b>${r?.text ? esc(r.text) : 'Belohnung festlegen'}</b><span>${sub}</span>${extra}</span>
+        <i class="hole t"></i><i class="hole b"></i>${ui.editRewards ? ms('edit', 'edit') : ''}
+      </${tag}>`;
+    };
+
+    body = `<div class="fair">
+        <div class="l"><span>Fair geteilt seit Level ${state.teamLevel}?</span>${fairMsg}</div>
+        <div class="fair-bar"><span style="width:${pct(shareMe)}%;background:${pColor(me)}"></span><span style="background:${pColor(partner)}"></span>
+          <i style="left:33.3%"></i><i style="left:66.6%"></i></div>
+        <div class="l foot"><span>${esc(me.name)} ${pct(shareMe)} %</span><span>Markierung = ein Drittel</span><span>${esc(partner.name)} ${100 - pct(shareMe)} %</span></div>
+      </div>
+      <section class="stack">
+        ${sec('Team-Belohnungen', `<button class="link" data-action="toggleEditRewards">${ui.editRewards ? 'Fertig' : 'Bearbeiten'}</button>`)}
+        <div class="tickets">${levels.map(ticket).join('')}</div>
+      </section>`;
+  }
 
   return `
-    <header class="top"><h1>Belohnungen</h1></header>
-
-    <h3 class="sec">Deine Überraschungen</h3>
-    ${surprise}
-    ${open.map(v => `<div class="card voucher"><div class="voucher-text">${esc(v.text)}</div>
-        <div class="row-between"><span class="small muted">von ${esc(partner.name)} · gezogen ${fmtDate(v.pickedAt)}</span>
-        <button class="btn small" data-action="redeemVoucher" data-id="${v.id}">Eingelöst</button></div></div>`).join('')}
-    ${used.length ? `<details class="card"><summary>Eingelöst (${used.length})</summary>${used.map(v => `<div class="used">${esc(v.text)} <span class="small muted">${fmtDate(v.redeemedAt)}</span></div>`).join('')}</details>` : ''}
-
-    <h3 class="sec">Für ${esc(partner.name)} hinterlegen</h3>
-    <div class="card">
-      <p class="small muted">${esc(partner.name)} zieht bei jedem Levelaufstieg eine von bis zu drei verdeckten Karten und sieht den Text erst dann.
-        Im Topf: <b>${partnerPool}</b>${partnerPool < 3 ? ' (mindestens 3 sind ideal)' : ''}.</p>
-      <textarea id="voucher-text" rows="2" maxlength="200" placeholder="z. B. Ich koche dein Lieblingsessen"></textarea>
-      <button class="btn primary" data-action="addVoucher">In den Topf legen</button>
-      ${fromMe.length ? `<div class="mine">${fromMe.map(v => `<div class="mine-row">
-          <span>${esc(v.text)}</span>
-          ${v.pickedAt ? `<span class="small muted">${v.redeemedAt ? 'eingelöst' : 'gezogen'}</span>`
-                       : `<button class="x" data-action="deleteVoucher" data-id="${v.id}" aria-label="Entfernen">×</button>`}
-        </div>`).join('')}</div>` : ''}
-    </div>
-
-    <h3 class="sec">Team-Belohnungen</h3>
-    <p class="small muted pad">Gemeinsam festlegen. Einlösbar, wenn ihr seit dem vorigen Level beide mindestens ein Drittel beigetragen habt.</p>
-    <div class="card list-card">${teamLevels.map(rewardRow).join('')}</div>
-  `;
+    ${vacationBanner(c)}
+    <header class="page-head"><h1>Belohnungen</h1>${avatars(c)}</header>
+    ${segmented([['me', 'Für mich', picks], ['partner', `Für ${esc(partner.name)}`, partnerPool.length], ['team', 'Team']], ui.rewardsTab, 'rewardsTab', 'tall')}
+    ${body}`;
 }
+
+// ---------- Statistik ----------
 
 function viewStats(c) {
-  const { state, players, me, partner } = c;
-  const range = { week: ['Woche', state.week], month: ['Monat', state.month], all: ['Gesamt', state.total] };
-  const pts = range[ui.statsRange][1];
-  const sum = pts[me.id] + pts[partner.id];
-  const share = id => (sum ? Math.round((pts[id] / sum) * 100) : 50);
+  const { state, players, me, partner, now } = c;
+  const order = [me, partner];
+  let body;
 
-  const playerCard = p => {
-    const li = state.personal[p.id];
-    return `<div class="card player">
-      <div class="row">${avatar(p)}<div><b>${esc(p.name)}</b><div class="small muted">Level ${li.level} · ${personalTitle(li.level)}</div></div></div>
-      ${bar(li.progress, PLAYER_COLORS[p.id])}
-      <div class="small muted">${fmtNum(state.xp[p.id])} / ${fmtNum(li.next)} Punkte</div>
+  if (ui.statsView === 'over') {
+    const ranges = { week: ['Woche', 'diese Woche', weekStart(now)], month: ['Monat', 'dieser Monat', monthStart(now)], all: ['Gesamt', 'seit Start', -Infinity] };
+    const [, periodLabel, from] = ranges[ui.statsRange];
+    const pts = state.sumSince(from);
+    const a = pts[me.id], b = pts[partner.id], sum = a + b;
+    const shareA = sum ? a / sum : 0.5;
+    const diff = Math.abs(a - b);
+    const lead = diff < 5 ? 'Gleichauf' : `${esc((a > b ? me : partner).name)} +${fmtNum(diff)}`;
+
+    const byArea = pointsByArea(state.done, from, areaOf, players);
+    const maxArea = Math.max(0, ...Object.values(byArea).map(x => x[me.id] + x[partner.id]));
+    const areaRow = k => {
+      const x = byArea[k] ?? { [me.id]: 0, [partner.id]: 0 };
+      const total = x[me.id] + x[partner.id];
+      const w = maxArea ? Math.max(0.08, total / maxArea) : 0.08;
+      return `<div class="as-row">${tile(k, 't38')}
+        <div class="grow"><div class="l"><b>${AREAS[k].name}</b><span><b style="color:${pColor(me)}">${fmtNum(x[me.id])}</b> · <b style="color:${pColor(partner)}">${fmtNum(x[partner.id])}</b></span></div>
+          ${total ? `<div class="as-bar" style="width:${pct(w)}%"><span style="width:${pct(x[me.id] / total)}%;background:${pColor(me)}"></span><span style="background:${pColor(partner)}"></span></div>`
+            : '<div class="bar"></div>'}</div>
+      </div>`;
+    };
+
+    const levelCard = p => {
+      const li = state.personal[p.id];
+      return `<div class="card lvcard">
+        <div class="who">${avatar(p, 'lg')}<div><b>${esc(p.name)}</b><span>Level ${li.level}</span></div></div>
+        <span class="title" style="color:${pColor(p)}">${personalTitle(li.level)}</span>
+        <div class="stack-8" style="gap:6px">${bar(li.progress, pColor(p))}<span class="xp">${fmtNum(state.xp[p.id])} / ${fmtNum(li.next)} Punkte</span></div>
+      </div>`;
+    };
+
+    const tops = p => {
+      const counts = {};
+      for (const x of state.done) if (x.player === p.id && x.at >= from) counts[x.taskId] = (counts[x.taskId] ?? 0) + 1;
+      const top = Object.entries(counts).sort((x, y) => y[1] - x[1]).slice(0, 3).filter(([id]) => taskById(id));
+      return `<div class="card tops"><b style="color:${pColor(p)}">${esc(p.name)}</b>${top.length
+        ? top.map(([id]) => `<div class="it">${tile(areaOf(id), 't26', iconOf(id))}<span>${esc(taskById(id).name)}</span></div>`).join('')
+        : '<span class="none">noch nichts</span>'}</div>`;
+    };
+
+    body = `
+      ${segmented([['week', 'Woche'], ['month', 'Monat'], ['all', 'Gesamt']], ui.statsRange, 'statsRange')}
+      <section class="card contrib">
+        <div class="top">
+          <div class="who"><small style="color:${pColor(me)}">${esc(me.name)}</small><b>${fmtNum(a)}</b></div>
+          <span class="sum">${fmtNum(sum)} Pkt zusammen</span>
+          <div class="who r"><small style="color:${pColor(partner)}">${esc(partner.name)}</small><b>${fmtNum(b)}</b></div>
+        </div>
+        <div class="split"><span style="width:${pct(shareA)}%;background:${pColor(me)}"></span><span style="background:${pColor(partner)}"></span></div>
+        <div class="foot"><span>${pct(shareA)} %</span><b>${sum ? lead : 'Noch nichts erledigt'}</b><span>${100 - pct(shareA)} %</span></div>
+      </section>
+      <section class="stack">
+        ${sec('Wer macht was?', hint(periodLabel))}
+        <div class="card areasplit rows">${Object.keys(AREAS).map(areaRow).join('')}</div>
+      </section>
+      <div class="grid2">${order.map(levelCard).join('')}</div>
+      <section class="card penalty"><span class="tile od">${ms('hourglass_bottom')}</span>
+        <span class="grow"><b>Liegengeblieben</b><span>Teampunkte durch überfällige Aufgaben, seit Start</span></span>
+        <b>${state.penaltyTotal ? `−${fmtNum(state.penaltyTotal)}` : '0'}</b></section>
+      <section class="stack">
+        ${sec('Am häufigsten erledigt', hint(periodLabel))}
+        <div class="grid2">${order.map(tops).join('')}</div>
+      </section>`;
+  } else {
+    const list = [...state.done].reverse()
+      .filter(x => ui.histWho === 'all' || x.player === ui.histWho)
+      .slice(0, 120);
+    const days = [];
+    for (const x of list) {
+      const day = startOfDay(x.at);
+      if (days.at(-1)?.day !== day) days.push({ day, items: [] });
+      days.at(-1).items.push(x);
+    }
+    const row = x => {
+      const p = c.name(x.player);
+      return `<div class="hrow">
+        <span class="ava">${tile(areaOf(x.taskId) ?? 'kueche', 't38', iconOf(x.taskId))}${p ? avatar(p) : ''}</span>
+        <span class="grow"><b>${esc(taskById(x.taskId)?.name ?? x.taskId)}</b><span>${esc(p?.name ?? '?')} · ${fmtTime(x.at)}${x.rescue ? ' · Rettung' : ''}</span></span>
+        <b>+${xpOf(x)}</b>
+        <button class="icon-btn del" data-action="deleteCompletion" data-id="${x.id}" aria-label="Eintrag löschen">${ms('close', 'outline')}</button>
+      </div>`;
+    };
+    body = `
+      ${segmented([['all', 'Alle'], [me.id, esc(me.name)], [partner.id, esc(partner.name)]], ui.histWho, 'histWho')}
+      ${days.length ? days.map(d => `<section class="stack-8">
+          <div class="day-head"><span>${fmtDay(d.day)}</span><span>+${fmtNum(d.items.reduce((s, x) => s + xpOf(x), 0))}</span></div>
+          <div class="card hist rows">${d.items.map(row).join('')}</div>
+        </section>`).join('') : '<p class="empty">Noch nichts erledigt. Der erste Eintrag landet hier.</p>'}`;
+  }
+
+  return `
+    ${vacationBanner(c)}
+    <header class="page-head"><h1>Statistik</h1>${avatars(c)}</header>
+    ${segmented([['over', 'Überblick'], ['hist', 'Verlauf']], ui.statsView, 'statsView')}
+    ${body}`;
+}
+
+// ---------- Einstellungen ----------
+
+function viewSettings(c) {
+  const { players, settings, me, partner } = c;
+  const pause = activePause(settings);
+  const connected = Boolean(store.get(`presence-${partner.id}`));
+
+  const profile = p => {
+    const mine = p.id === me.id;
+    return `<div class="profile${mine ? ' me' : ''}" style="--pc:${pColor(p)}">
+      <button class="avatar xl" style="--pc:${pColor(p)}" data-action="setMe" data-id="${p.id}" aria-label="${esc(p.name)} nutzt dieses Handy">${initial(p)}</button>
+      <input class="name-in" value="${esc(p.name)}" maxlength="24" data-change="playerName" data-id="${p.id}" aria-label="Name">
+      <div class="swatches">${[0, 1, 2, 3].map(i => `<button class="${colorIndex(p) === i ? 'on' : ''}" style="background:var(--swatch-${i + 1})"
+        data-action="setColor" data-id="${p.id}" data-val="${i}" aria-label="Farbe ${i + 1}"></button>`).join('')}</div>
+      <button class="me-btn" data-action="setMe" data-id="${p.id}">${mine ? `${ms('check_circle')}Das bin ich` : `${ms('smartphone')}Ich bin das`}</button>
     </div>`;
   };
 
-  const favourites = p => {
-    const counts = {};
-    for (const x of state.done) if (x.player === p.id) counts[x.taskId] = (counts[x.taskId] ?? 0) + 1;
-    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
-    return `<div><div class="small"><b>${esc(p.name)}</b></div>${top.length
-      ? top.map(([id, n]) => `<div class="small muted">${n}× ${esc(taskById(id)?.name ?? id)}</div>`).join('')
-      : '<div class="small muted">noch nichts</div>'}</div>`;
+  let household;
+  if (!CLOUD && !DEMO) {
+    household = `<div class="hh-head"><span class="tile t40 soft">${ms('smartphone')}</span>
+      <span class="grow"><b>Nur auf diesem Gerät</b><span>Für zwei Handys einmal Supabase einrichten (README, Schritt 1).</span></span></div>`;
+  } else {
+    const head = connected
+      ? `<span class="tile t40 soft">${ms('group')}</span><span class="grow"><b>Euer Haushalt</b><span>${esc(me.name)} und ${esc(partner.name)} sind verbunden · ${syncLabel()}</span></span>`
+      : `<span class="tile t40 soft">${ms('person_add')}</span><span class="grow"><b>Partner einladen</b><span>Schick ${esc(partner.name)} den Link. Danach putzt ihr als Team.</span></span>`;
+    household = `<div class="hh-head">${head}</div>
+      ${DEMO ? '<p class="fine">Demo: eigener Test-Haushalt, nicht mit eurem echten Haushalt verbunden.</p>' : ''}
+      ${store.status.startsWith('error') ? `<p class="fine od">${esc(store.status)}</p>` : ''}
+      <div class="stack" style="gap:10px">
+        ${connected ? '' : `<div class="code-box"><b>${esc(device.household)}</b><span>euer Schlüssel</span></div>`}
+        <div class="btn2">
+          <button class="pill mid" data-action="copyCode">${ms(ui.copied ? 'check' : 'content_copy')}${ui.copied ? 'Kopiert' : 'Code kopieren'}</button>
+          <button class="pill mid primary" data-action="share">${ms('ios_share')}Link teilen</button>
+        </div>
+        <p class="fine">${connected
+          ? 'Neues Handy? Link öffnen oder den Code eingeben. Den Code nur untereinander weitergeben.'
+          : 'Wer den Link öffnet oder den Code eingibt, tritt eurem Haushalt bei und sieht denselben Plan. Nur an deinen Partner weitergeben.'}</p>
+      </div>
+      <div class="hr"></div>
+      <div class="stack" style="gap:8px">
+        <button class="join-toggle" data-action="toggleJoin" aria-expanded="${ui.joinOpen}">${ms('login', 'outline')}<span>Du hast einen Code bekommen?</span>${ms('expand_more', `chev outline${ui.joinOpen ? ' up' : ''}`)}</button>
+        ${ui.joinOpen ? `<div class="join-row">
+            <input id="join-code" class="field" placeholder="XXXX-XXXX-XXXX-…" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="Haushaltscode">
+            <button class="pill primary" data-action="joinOther" disabled>Beitreten</button>
+          </div>
+          <p class="fine">Achtung: Du verlässt dann diesen Haushalt und wechselst in den anderen.</p>` : ''}
+      </div>`;
+  }
+
+  const areaBlock = k => {
+    const tasks = TASKS.filter(t => t.area === k);
+    const changed = tasks.filter(t => taskPoints(t, settings) !== t.points).length;
+    const open = ui.pointsArea === k;
+    return `<div class="${open ? 'open' : ''}">
+      <button class="acc-head pt-head" data-action="pointsArea" data-val="${k}" aria-expanded="${open}">${tile(k, 't40')}
+        <span class="grow"><b>${AREAS[k].name}</b><span>${plural(tasks.length, 'Aufgabe', 'Aufgaben')}${changed ? ` · ${changed} angepasst` : ''}</span></span>
+        ${ms('expand_more', 'chev outline')}</button>
+      ${open ? `<div class="pt-body">${tasks.map(t => {
+        const p = taskPoints(t, settings);
+        const isChanged = p !== t.points;
+        return `<div class="pt-row"><span class="grow"><b>${esc(t.name)}</b><span>${INTERVALS[t.interval].label}${isChanged ? ` · Standard ${t.points}` : ''}</span></span>
+          <span class="stepper">
+            <button data-action="stepPoints" data-id="${t.id}" data-dir="-1" ${p <= POINT_STEPS[0] ? 'disabled' : ''} aria-label="weniger Punkte">${ms('remove')}</button>
+            <b class="${isChanged ? 'changed' : ''}">${p}</b>
+            <button data-action="stepPoints" data-id="${t.id}" data-dir="1" ${p >= POINT_STEPS.at(-1) ? 'disabled' : ''} aria-label="mehr Punkte">${ms('add')}</button>
+          </span></div>`;
+      }).join('')}</div>` : ''}
+    </div>`;
   };
 
-  const history = [...state.done].reverse().slice(0, 40);
-  const tab = (key) => `<button class="chip${ui.statsRange === key ? ' on' : ''}" data-action="statsRange" data-val="${key}">${range[key][0]}</button>`;
+  const rule = (icon, cls, title, text) => `<div class="lrow"><span class="tile t40 ${cls}">${ms(icon)}</span>
+    <span class="grow"><b>${title}</b><span>${text}</span></span></div>`;
 
   return `
-    <header class="top"><h1>Statistik</h1></header>
-    <div class="grid2">${players.map(playerCard).join('')}</div>
+    ${vacationBanner(c)}
+    <header class="page-head"><h1>Einstellungen</h1></header>
 
-    <h3 class="sec">Wer hat beigetragen?</h3>
-    <div class="chips">${tab('week')}${tab('month')}${tab('all')}</div>
-    <div class="card">
-      <div class="split">
-        <span style="flex:${pts[me.id] || (sum ? 0 : 1)};background:${PLAYER_COLORS[me.id]}"></span>
-        <span style="flex:${pts[partner.id] || (sum ? 0 : 1)};background:${PLAYER_COLORS[partner.id]}"></span>
+    <section class="stack">
+      ${sec('Wer seid ihr?', hint('Tippe auf dich'))}
+      <div class="grid2">${players.map(profile).join('')}</div>
+    </section>
+
+    <section id="household" class="card pad hh">${household}</section>
+
+    <section class="card lcard">
+      <div class="lrow"><span class="tile t40 vac${pause ? ' on' : ''}">${ms('beach_access')}</span>
+        <span class="grow"><b>Urlaubsmodus</b><span>${pause ? `Läuft seit ${fmtDate(pause.from)} · nichts wird überfällig` : 'Pausiert die Uhr für euch beide'}</span></span>
+        <button class="switch${pause ? ' on' : ''}" role="switch" aria-checked="${Boolean(pause)}" aria-label="Urlaubsmodus" data-action="toggleVacation"><span></span></button>
       </div>
-      <div class="row-between small">
-        <span>${avatar(me)} ${esc(me.name)} · ${fmtNum(pts[me.id])} Pkt (${share(me.id)} %)</span>
-        <span>${fmtNum(pts[partner.id])} Pkt (${share(partner.id)} %) ${avatar(partner)}</span>
+    </section>
+
+    <section class="stack">
+      ${sec('Punkte anpassen', hint('nach Schwierigkeit'))}
+      <div class="card rows" style="overflow:hidden">${Object.keys(AREAS).map(areaBlock).join('')}</div>
+    </section>
+
+    <section class="stack">
+      ${sec('So funktioniert’s')}
+      <div class="card lcard rows">
+        ${rule('hourglass_bottom', 'od', 'Liegenlassen kostet', `Überfällige Aufgaben kosten das Team pro Tag ${pct(RULES.penaltyRate)} % ihrer Punkte, höchstens ${RULES.penaltyCapDays} Tage lang.`)}
+        ${rule('volunteer_activism', 'soft', 'Retten lohnt sich', `Wer eine überfällige Aufgabe erledigt, bekommt +${pct(RULES.rescueBonus)} % aufs persönliche Level.`)}
+        ${rule('schedule', 'info', 'Nicht zu früh', RULES.earlyFraction === 0.5 ? 'Punkte gibt es erst wieder, wenn die Hälfte des Intervalls vorbei ist.' : `Punkte gibt es erst wieder, wenn ${pct(RULES.earlyFraction)} % des Intervalls vorbei sind.`)}
+        ${rule('balance', 'partner', 'Fair teilen', 'Team-Belohnungen sind einlösbar, wenn beide seit dem letzten Level mind. ein Drittel beigetragen haben.')}
       </div>
-    </div>
+    </section>
 
-    <h3 class="sec">Liegengeblieben</h3>
-    <div class="card row-between">
-      <span>Minuspunkte bisher</span>${state.penaltyTotal ? `<b class="bad">−${fmtNum(state.penaltyTotal)}</b>` : '<b class="good">keine</b>'}
-    </div>
-
-    <h3 class="sec">Am häufigsten erledigt</h3>
-    <div class="card grid2 plain">${players.map(favourites).join('')}</div>
-
-    <h3 class="sec">Verlauf</h3>
-    <div class="card list-card">${history.length ? history.map(x => `<div class="hist">
-        ${avatar(c.name(x.player))}
-        <div class="hist-main"><div>${esc(taskById(x.taskId)?.name ?? x.taskId)}</div>
-          <div class="small muted">${fmtDateTime(x.at)}${x.rescue ? ' · Rettung' : ''}</div></div>
-        <b class="small">+${xpOf(x)}</b>
-        <button class="x" data-action="deleteCompletion" data-id="${x.id}" aria-label="Eintrag löschen">×</button>
-      </div>`).join('') : '<p class="muted small">Noch nichts erledigt.</p>'}</div>
-  `;
-}
-
-function pastPauses(settings) {
-  const past = (settings.pauses ?? []).filter(p => p.to).slice(-3).reverse();
-  if (!past.length) return '';
-  const days = p => Math.max(1, Math.round((p.to - p.from) / DAY));
-  return `<div class="small muted pauses">Bisher: ${past.map(p => `${fmtDate(p.from)} – ${fmtDate(p.to)} (${plural(days(p), 'Tag', 'Tage')})`).join(' · ')}</div>`;
-}
-
-function viewSettings(c) {
-  const { players, settings, me } = c;
-  const link = `${location.origin}${location.pathname}#join=${device.household}`;
-  const areaBlock = ([key, area]) => `<details class="card">
-      <summary>${area.icon} ${area.name}</summary>
-      ${TASKS.filter(t => t.area === key).map(t => `<label class="pt-row">
-        <span>${esc(t.name)}<span class="small muted"> · ${INTERVALS[t.interval].label}</span></span>
-        <input type="number" inputmode="numeric" min="0" max="200" value="${settings.pointOverrides?.[t.id] ?? t.points}"
-          data-change="points" data-id="${t.id}">
-      </label>`).join('')}
-    </details>`;
-
-  return `
-    <header class="top"><h1>Einstellungen</h1></header>
-
-    <h3 class="sec">Wer nutzt dieses Handy?</h3>
-    <div class="chips">${players.map(p => `<button class="chip${p.id === me.id ? ' on' : ''}" data-action="setMe" data-id="${p.id}">${esc(p.emoji)} ${esc(p.name)}</button>`).join('')}</div>
-
-    <h3 class="sec">Namen</h3>
-    <div class="card">${players.map(p => `<div class="name-row">
-        <input class="emoji-in" value="${esc(p.emoji)}" maxlength="4" data-change="playerEmoji" data-id="${p.id}" aria-label="Emoji">
-        <input value="${esc(p.name)}" maxlength="24" data-change="playerName" data-id="${p.id}" aria-label="Name">
-      </div>`).join('')}</div>
-
-    <h3 class="sec">Zweites Handy verbinden</h3>
-    <div class="card">
-      ${CLOUD ? `
-        <p class="small muted">Schick den Link an das andere Handy. Dort in Safari öffnen, dann über „Teilen → Zum Home-Bildschirm“ installieren.
-          Falls die installierte App den Code nicht übernimmt: unter „Haushalt beitreten“ einfügen.</p>
-        <div class="code">${esc(device.household)}</div>
-        <div class="row gap">
-          <button class="btn primary" data-action="share" data-link="${esc(link)}">Link teilen</button>
-          <button class="btn" data-action="copyCode">Code kopieren</button>
-        </div>
-        <p class="small muted">Der Code ist euer Schlüssel. Nur an deine Partnerin oder deinen Partner weitergeben.</p>
-        <div class="row-between"><span class="small">Status: ${syncLabel()}</span><button class="btn small" data-action="syncNow">Jetzt abgleichen</button></div>
-        ${store.status.startsWith('error') ? `<p class="small bad">${esc(store.status)}</p>` : ''}`
-      : `<p class="small">Die App speichert gerade <b>nur auf diesem Gerät</b>. Für zwei Handys einmal Supabase einrichten (README, Schritt 1).</p>`}
-    </div>
-
-    <h3 class="sec">Urlaubsmodus</h3>
-    <div class="card">
-      ${activePause(settings)
-        ? `<p class="small">Aktiv seit <b>${fmtDate(activePause(settings).from)}</b>. Die Putz-Uhr steht für euch beide.</p>
-           <button class="btn primary" data-action="endVacation">Urlaub beenden</button>`
-        : `<p class="small muted">Wenn ihr länger weg seid oder nicht putzen könnt: Die Zeit bleibt stehen, nichts wird überfällig, es gibt keine Minuspunkte. Danach geht es dort weiter, wo ihr aufgehört habt. Gilt für euch beide.</p>
-           <button class="btn" data-action="startVacation">🏖️ Urlaub starten</button>`}
-      ${pastPauses(settings)}
-    </div>
-
-    <h3 class="sec">Punkte anpassen</h3>
-    ${Object.entries(AREAS).map(areaBlock).join('')}
-
-    <h3 class="sec">Regeln</h3>
-    <div class="card small rules">
-      <p>Überfällige Aufgaben kosten das Team pro Tag ${Math.round(RULES.penaltyRate * 100)} % ihrer Punkte, höchstens ${RULES.penaltyCapDays} Tage lang.</p>
-      <p>Wer eine überfällige Aufgabe erledigt, bekommt +${Math.round(RULES.rescueBonus * 100)} % aufs persönliche Level.</p>
-      <p>Punkte gibt es erst wieder, wenn die Hälfte des Intervalls vorbei ist.</p>
-    </div>
-
-    <button class="btn ghost danger" data-action="leave">Auf diesem Gerät abmelden</button>
-    <p class="small muted version">Version ${APP_VERSION}</p>
+    <button class="leave" data-action="leave">Auf diesem Gerät abmelden</button>
+    <p class="version">Putzplan ${APP_VERSION}</p>
   `;
 }
 
@@ -464,23 +673,23 @@ function sheetHtml(c) {
   if (!ui.sheet) return '';
   const t = taskById(ui.sheet);
   const st = c.state.status[t.id];
-  const a = AREAS[t.area];
+  if (!st) return '';
   const early = c.now < st.earlyUntil;
   const xp = Math.round(st.points * (st.overdue ? 1 + RULES.rescueBonus : 1));
   const last = st.count ? `Zuletzt ${fmtDateTime(st.last)} von ${esc(c.name(st.lastBy)?.name ?? '?')}` : 'Noch nie erledigt';
   return `<div class="backdrop" data-action="closeSheet"></div>
-    <div class="sheet" role="dialog" aria-modal="true" style="--c:${a.color}">
+    <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(t.name)}">
       <div class="grab"></div>
-      <div class="sheet-area">${a.icon} ${a.name} · ${INTERVALS[t.interval].label}</div>
+      <div class="sheet-area">${tile(t.area, 't38')}${AREAS[t.area].name} · ${INTERVALS[t.interval].label}</div>
       <h2>${esc(t.name)}</h2>
-      <div class="sheet-pts"><b>${st.points}</b> Punkte${st.overdue ? ` <span class="badge">+${Math.round(RULES.rescueBonus * 100)} % Rettungsbonus</span>` : ''}</div>
-      <p class="small muted">${last}</p>
+      <div class="sheet-pts"><b>${st.points}</b> Punkte${st.overdue ? ` <span class="chip-bonus">+${pct(RULES.rescueBonus)} % Rettungsbonus</span>` : ''}</div>
+      <p>${last}</p>
       ${st.overdue ? (c.state.paused
-        ? '<p class="small muted">Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
-        : `<p class="small bad">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
-      ${early ? `<p class="hint">Noch frisch. Punkte gibt es wieder ab ${fmtDate(st.earlyUntil)}.</p>` : ''}
-      <button class="btn primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}" ${early ? 'disabled' : ''}>✓ Erledigt · +${xp}</button>
-      <button class="btn ghost" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}" ${early ? 'disabled' : ''}>Von ${esc(c.partner.name)} erledigt eintragen</button>
+        ? '<p>Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
+        : `<p class="od">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
+      ${early ? `<p class="note">Noch frisch. Punkte gibt es wieder ab ${fmtDate(st.earlyUntil)}.</p>` : ''}
+      <button class="pill primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}" ${early ? 'disabled' : ''}>${ms('check')}Erledigt · +${xp}</button>
+      <button class="pill mid" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}" ${early ? 'disabled' : ''}>Von ${esc(c.partner.name)} erledigt eintragen</button>
     </div>`;
 }
 
@@ -491,84 +700,72 @@ function modalHtml(c) {
   if (m.type === 'levelup') {
     const p = c.name(m.player);
     const isMe = p.id === c.me.id;
-    body = `<div class="burst">🏆</div><h2>${isMe ? 'Level' : `${esc(p.name)}: Level`} ${m.level}!</h2>
-      <p>${personalTitle(m.level)}</p>
-      <p class="muted small">${isMe ? `Du hast eine Überraschung von ${esc(c.partner.name)} freigespielt.` : `${esc(p.name)} darf jetzt eine Überraschung von dir ziehen.`}</p>
-      ${isMe ? '<button class="btn primary" data-action="tab" data-view="rewards">Zur Überraschung</button>' : ''}
-      <button class="btn ghost" data-action="closeModal">Weiter</button>`;
+    body = `<div class="burst">${ms('star')}</div><h2>${isMe ? 'Level' : `${esc(p.name)}: Level`} ${m.level}!</h2>
+      <p class="title">${personalTitle(m.level)}</p>
+      <p>${isMe ? `Du hast eine Karte von ${esc(c.partner.name)} freigespielt.` : `${esc(p.name)} darf jetzt eine Karte von dir ziehen.`}</p>
+      ${isMe ? '<button class="pill primary big" data-action="tab" data-view="rewards" data-tab="me">Karte ziehen</button>' : ''}
+      <button class="pill ghost" data-action="closeModal">Weiter</button>`;
   } else if (m.type === 'teamup') {
     const r = c.rewards.find(x => x.level === m.level);
-    body = `<div class="burst">🎉</div><h2>Team-Level ${m.level}!</h2>
+    body = `<div class="burst">${ms(rewardIcon(r?.text))}</div><h2>Team-Level ${m.level}!</h2>
       <p>${r?.text ? `Freigeschaltet: <b>${esc(r.text)}</b>` : 'Legt gemeinsam eine Belohnung fest.'}</p>
-      <button class="btn primary" data-action="tab" data-view="rewards">Zu den Belohnungen</button>
-      <button class="btn ghost" data-action="closeModal">Weiter</button>`;
-  } else if (m.type === 'pick') {
-    body = `<h2>Wähle eine Karte</h2><p class="muted small">Was drauf steht, hat ${esc(c.partner.name)} für dich ausgesucht.</p>
-      <div class="cards">${m.cards.map((id, i) => `<button class="pick-card" data-action="pickCard" data-id="${id}" style="--d:${i * 80}ms">?</button>`).join('')}</div>
-      <button class="btn ghost" data-action="closeModal">Später</button>`;
-  } else if (m.type === 'revealed') {
-    const v = c.vouchers.find(x => x.id === m.id);
-    body = `<div class="pick-card flipped">${esc(v?.text ?? '')}</div>
-      <p class="muted small">Gespeichert unter „Deine Überraschungen“. Einlösen, wann ihr wollt.</p>
-      <button class="btn primary" data-action="closeModal">Juhu!</button>`;
+      <button class="pill primary big" data-action="tab" data-view="rewards" data-tab="team">Zu den Belohnungen</button>
+      <button class="pill ghost" data-action="closeModal">Weiter</button>`;
   } else if (m.type === 'reward') {
     const r = c.rewards.find(x => x.level === m.level);
     body = `<h2>Belohnung für Team-Level ${m.level}</h2>
-      <input id="reward-text" maxlength="80" value="${esc(r?.text ?? '')}" placeholder="z. B. Pizzaabend">
-      <button class="btn primary" data-action="saveReward" data-level="${m.level}">Speichern</button>
-      <button class="btn ghost" data-action="closeModal">Abbrechen</button>`;
+      <input id="reward-text" class="field" maxlength="80" value="${esc(r?.text ?? '')}" placeholder="z. B. Pizzaabend">
+      <button class="pill primary big" data-action="saveReward" data-level="${m.level}">Speichern</button>
+      <button class="pill ghost" data-action="closeModal">Abbrechen</button>`;
   }
   return `<div class="backdrop" data-action="closeModal"></div><div class="modal" role="dialog" aria-modal="true">${body}</div>`;
 }
 
 function toastHtml() {
-  if (!ui.toast) return '';
-  return `<div class="toast"><span>${ui.toast.text}</span>${ui.toast.undo ? `<button data-action="undo" data-id="${ui.toast.undo}">Rückgängig</button>` : ''}</div>`;
-}
-
-function tabbar(c) {
-  const picks = picksAvailable(c.state, c.me.id, c.vouchers);
-  const tab = (view, ic, label, badge) => `<button class="tab${ui.view === view ? ' on' : ''}" data-action="tab" data-view="${view}">
-    ${icon(ic)}${badge ? `<span class="dot">${badge}</span>` : ''}<span>${label}</span></button>`;
-  return `<nav class="tabbar">${tab('home', 'home', 'Heute')}${tab('rewards', 'gift', 'Belohnungen', picks)}${tab('stats', 'chart', 'Statistik')}${tab('settings', 'gear', 'Einstellungen')}</nav>`;
+  const t = ui.toast;
+  if (!t) return '';
+  return `<div class="toast${ui.view === 'home' ? ' high' : ''}" role="status"><span class="t"><b>${esc(t.text)}</b>${t.sub ? `<span>${esc(t.sub)}</span>` : ''}</span>
+    ${t.undo ? '<button data-action="undo">Rückgängig</button>' : ''}</div>`;
 }
 
 // ---------- Einrichtung ----------
 
 function renderSetup() {
-  const joinCode = new URLSearchParams(location.hash.slice(1)).get('join') ?? '';
+  const joinCode = joinParam();
   $app.innerHTML = `<main class="setup">
-    <div class="logo">✨</div>
+    <div class="logo">${ms('cleaning_services')}</div>
     <h1>Putzplan</h1>
-    <p class="muted">Euer gemeinsamer Putzplan mit Punkten, Leveln und Überraschungen.</p>
-    ${ui.error ? `<p class="bad small">${esc(ui.error)}</p>` : ''}
-    ${CLOUD ? `<div class="card">
+    <p>Euer gemeinsamer Putzplan mit Punkten, Leveln und Überraschungen.</p>
+    ${ui.error ? `<p class="err">${esc(ui.error)}</p>` : ''}
+    ${CLOUD ? `<section class="card">
       <h3>Haushalt beitreten</h3>
-      <p class="small muted">Dein Partner oder deine Partnerin hat den Haushalt schon angelegt? Code einfügen.</p>
-      <input id="join-code" value="${esc(joinCode)}" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off">
-      <button class="btn ${joinCode ? 'primary' : ''}" data-action="join">Beitreten</button>
-    </div>` : ''}
-    <div class="card">
+      <p>Dein Partner hat den Haushalt schon angelegt? Link öffnen oder Code einfügen.</p>
+      <input id="join-code" class="field" value="${esc(joinCode)}" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
+      <button class="pill big ${joinCode ? 'primary' : ''}" data-action="join">Beitreten</button>
+      <p>Tipp: Öffnet die App vom Home-Bildschirm den Link nicht, den Code hier einfügen.</p>
+    </section>` : ''}
+    <section class="card">
       <h3>Neuen Haushalt anlegen</h3>
-      <div class="name-row"><input class="emoji-in" id="e1" value="🧽" maxlength="4"><input id="n1" placeholder="Dein Name" maxlength="24"></div>
-      <div class="name-row"><input class="emoji-in" id="e2" value="🫧" maxlength="4"><input id="n2" placeholder="Name Partner/in" maxlength="24"></div>
-      <button class="btn ${joinCode ? '' : 'primary'}" data-action="create">Los geht's</button>
-    </div>
-    ${CLOUD ? '' : '<p class="small muted">Hinweis: Noch kein Supabase eingerichtet. Alles wird nur auf diesem Gerät gespeichert.</p>'}
+      <input id="n1" class="field" placeholder="Dein Name" maxlength="24" autocomplete="given-name">
+      <input id="n2" class="field" placeholder="Name deines Partners" maxlength="24">
+      <button class="pill big ${joinCode ? '' : 'primary'}" data-action="create">Los geht’s</button>
+    </section>
+    ${CLOUD || DEMO ? '' : '<p class="fine">Hinweis: Noch kein Supabase eingerichtet. Alles wird nur auf diesem Gerät gespeichert.</p>'}
   </main>`;
 }
 
 function renderWhoAmI(settings) {
-  $app.innerHTML = `<main class="setup"><div class="logo">👋</div><h1>Wer bist du?</h1>
-    <p class="muted">Nur für dieses Handy. Lässt sich später in den Einstellungen ändern.</p>
-    ${settings.players.map(p => `<button class="btn big who" data-action="setMe" data-id="${p.id}">${esc(p.emoji)} ${esc(p.name)}</button>`).join('')}
+  $app.innerHTML = `<main class="setup">
+    <div class="logo">${ms('waving_hand')}</div><h1>Wer bist du?</h1>
+    <p>Nur für dieses Handy. Lässt sich später in den Einstellungen ändern.</p>
+    <div class="who-list">${settings.players.map(p => `<button class="who-btn" data-action="setMe" data-id="${p.id}">${avatar(p, 'lg')}${esc(p.name)}</button>`).join('')}</div>
   </main>`;
 }
 
-function createHousehold(name1, emoji1, name2, emoji2) {
+function createHousehold(name1, name2) {
   openHousehold(newHouseholdCode());
   store.put('settings', 'settings', {
-    players: [{ id: 'a', name: name1, emoji: emoji1 || '🧽' }, { id: 'b', name: name2, emoji: emoji2 || '🫧' }],
+    players: [{ id: 'a', name: name1, color: 0 }, { id: 'b', name: name2, color: 1 }],
     startedAt: Date.now(),
     pointOverrides: {},
   });
@@ -577,12 +774,12 @@ function createHousehold(name1, emoji1, name2, emoji2) {
   }
   device.me = 'a';
   saveDevice();
-  history.replaceState(null, '', location.pathname + location.search);
+  cleanUrl();
 }
 
 // Beispieldaten für den Demo-Modus, damit alle Ansichten etwas zeigen.
 function seedDemo() {
-  createHousehold('Alex', '🧽', 'Sam', '🫧');
+  createHousehold('Alex', 'Sam');
   const now = Date.now();
   const startedAt = now - 12 * DAY;
   store.put('settings', 'settings', { ...store.get('settings'), startedAt });
@@ -606,8 +803,35 @@ function seedDemo() {
 function openHousehold(code) {
   device.household = code;
   saveDevice();
+  unsubscribe?.();
   store = createStore(code, { cloud: CLOUD });
-  store.subscribe(scheduleRender);
+  unsubscribe = store.subscribe(scheduleRender);
+}
+
+async function joinHousehold(code) {
+  const prev = { ...device };
+  ui.error = null;
+  device = { household: code };
+  openHousehold(code);
+  ui.view = 'home';
+  render();
+  await store.sync();
+  if (store.get('settings')) {
+    cleanUrl();
+  } else {
+    const error = store.status.startsWith('error') ? `Verbindung fehlgeschlagen: ${store.status}` : 'Zu diesem Code gibt es keinen Haushalt.';
+    device = prev;
+    saveDevice();
+    if (prev.household) { openHousehold(prev.household); showToast(error); } else { store = null; ui.error = error; }
+  }
+  render();
+}
+
+// Merkt sich im Haushalt, dass diese Person die App auf einem Gerät nutzt („verbunden“ in den Einstellungen).
+function markPresence() {
+  if (store && device.me && !store.get(`presence-${device.me}`)) {
+    store.put('presence', `presence-${device.me}`, { seenAt: Date.now() });
+  }
 }
 
 // ---------- Rendern ----------
@@ -617,38 +841,55 @@ function render() {
   if (!store) return renderSetup();
   const settings = store.get('settings');
   if (!settings) {
-    $app.innerHTML = `<main class="setup"><div class="logo">⏳</div><h1>Verbinde …</h1><p class="muted">${syncLabel()}</p></main>`;
+    $app.innerHTML = `<main class="setup"><div class="logo">${ms('sync')}</div><h1>Verbinde …</h1><p>${syncLabel()}</p></main>`;
     return;
   }
   if (!device.me || !settings.players.some(p => p.id === device.me)) return renderWhoAmI(settings);
+  markPresence();
   const c = ctx();
   const views = { home: viewHome, rewards: viewRewards, stats: viewStats, settings: viewSettings };
-  $app.innerHTML = `<main class="view">${views[ui.view](c)}</main>${tabbar(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
+  $app.innerHTML = `<main class="view ${ui.view}">${views[ui.view](c)}</main>${dockHtml(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
 }
 
-// Während getippt wird nicht neu zeichnen, sonst verliert das Feld den Fokus.
+// Während getippt wird oder eine Karte sich dreht, nicht neu zeichnen.
 function scheduleRender() {
-  if (document.activeElement?.matches?.('input, textarea')) { renderDeferred = true; return; }
+  if (Date.now() < holdUntil || document.activeElement?.matches?.('input, textarea')) { renderDeferred = true; return; }
   render();
+}
+function holdRender(msHold) {
+  holdUntil = Date.now() + msHold;
+  setTimeout(scheduleRender, msHold + 20);
 }
 // Verzögert, damit ein Tipp auf einen Treffer noch ankommt, bevor neu gezeichnet wird (iOS schließt erst die Tastatur).
 document.addEventListener('focusout', () => setTimeout(() => { if (renderDeferred) scheduleRender(); }, 300));
 
-// Suche: nur die Trefferliste neu zeichnen, damit das Eingabefeld den Fokus behält.
+// Eingaben, die nur einen Teil der Seite betreffen, damit das Feld den Fokus behält.
 document.addEventListener('input', e => {
-  if (e.target.id !== 'search') return;
-  ui.search = e.target.value;
-  const active = Boolean(ui.search.trim());
-  document.getElementById('home-cards').hidden = active;
-  document.querySelector('[data-action="clearSearch"]').hidden = !ui.search;
-  document.getElementById('home-list').innerHTML = homeList(ctx());
+  const el = e.target;
+  if (el.id === 'search') {
+    ui.search = el.value;
+    const results = document.getElementById('search-results');
+    results.hidden = !ui.search.trim();
+    results.innerHTML = searchResults(ctx());
+    document.querySelector('[data-action="clearSearch"]').hidden = !ui.search;
+  } else if (el.id === 'voucher-text') {
+    document.querySelector('[data-action="addVoucher"]').disabled = !el.value.trim();
+  } else if (el.id === 'join-code' && ui.view === 'settings') {
+    document.querySelector('[data-action="joinOther"]').disabled = !normalizeCode(el.value);
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'voucher-text') actions.addVoucher();
+  else if (e.target.id === 'reward-text') document.querySelector('[data-action="saveReward"]')?.click();
+  else if (e.target.id === 'search') e.target.blur();
 });
 
 // ---------- Aktionen ----------
 
 function celebrate() {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const colors = ['#D9662B', '#2F7BBF', '#3E8E54', '#7A9A1E', '#7D55B0', '#F2B705'];
+  const colors = ['#eaaa7f', '#7bc5ef', '#8ecc9a', '#b8c27a', '#c4adef', '#7ae2c0'];
   const box = document.createElement('div');
   box.className = 'confetti';
   for (let i = 0; i < 28; i++) {
@@ -662,14 +903,15 @@ function celebrate() {
 }
 
 let toastTimer;
-function showToast(text, undo) {
-  ui.toast = { text, undo };
+function showToast(text, { sub = '', undo = null, ms: duration = 3800 } = {}) {
+  ui.toast = { text, sub, undo };
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { ui.toast = null; scheduleRender(); }, 5000);
+  toastTimer = setTimeout(() => { ui.toast = null; scheduleRender(); }, duration);
 }
 
 function complete(taskId, playerId) {
   const st = ctx().state.status[taskId];
+  if (Date.now() < st.earlyUntil) return;
   logCompletion({ taskId, player: playerId, at: Date.now(), points: st.points, rescue: st.overdue });
 }
 
@@ -682,8 +924,13 @@ function completeDaily(taskId) {
 function logCompletion(data, { quiet = false } = {}) {
   const before = ctx();
   const id = uid('c');
+  const p = before.name(data.player);
+  const isMe = data.player === before.me.id;
   ui.sheet = null;
-  showToast(`+${xpOf(data)} Punkte für ${esc(before.name(data.player).name)}${data.rescue ? ' · Rettung!' : ''}`, id);
+  showToast(`+${data.points} Punkte · ${taskById(data.taskId).name}`, {
+    sub: data.rescue ? `Rettung: +${xpOf(data)} für ${isMe ? 'dein' : `${p.name}s`} Level` : isMe ? '' : `für ${p.name}`,
+    undo: () => store.update(id, { deleted: true }),
+  });
   store.put('completion', id, data);
   const playerId = data.player;
   const after = ctx();
@@ -705,39 +952,72 @@ function shuffle(list) {
   return a;
 }
 
+function updateSettings(patch) {
+  const settings = store.get('settings');
+  store.put('settings', 'settings', { ...settings, ...(typeof patch === 'function' ? patch(settings) : patch) });
+}
+function updatePlayer(id, patch) {
+  updateSettings(s => ({ players: s.players.map(p => (p.id === id ? { ...p, ...patch } : p)) }));
+}
+
 const actions = {
-  tab: d => { ui.view = d.view; ui.sheet = null; ui.modal = null; render(); scrollTo(0, 0); },
-  filter: d => { ui.filter = d.val; render(); },
-  toggleFresh: () => { ui.showFresh = !ui.showFresh; render(); },
+  tab: d => {
+    ui.view = d.view;
+    if (d.tab) ui.rewardsTab = d.tab;
+    ui.sheet = null; ui.modal = null; ui.editRewards = false;
+    render();
+    scrollTo(0, 0);
+  },
   clearSearch: () => { ui.search = ''; render(); document.getElementById('search')?.focus(); },
-  statsRange: d => { ui.statsRange = d.val; render(); },
+  openArea: d => {
+    ui.openArea = ui.openArea === d.val && !d.scroll ? null : d.val;
+    render();
+    if (d.scroll) document.getElementById(`area-${d.val}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
   open: d => { ui.sheet = d.id; render(); },
   closeSheet: () => { ui.sheet = null; render(); },
   closeModal: () => { ui.modal = null; render(); },
   complete: d => complete(d.id, d.player),
+  quick: d => complete(d.id, device.me),
   daily: d => completeDaily(d.id),
-  undo: d => { store.update(d.id, { deleted: true }); ui.toast = null; render(); },
-  deleteCompletion: d => { if (confirm('Diesen Eintrag löschen? Die Punkte werden abgezogen.')) store.update(d.id, { deleted: true }); },
+  undo: () => { const fn = ui.toast?.undo; ui.toast = null; fn?.(); render(); },
+  deleteCompletion: d => {
+    const x = store.get(d.id);
+    store.update(d.id, { deleted: true });
+    showToast(`„${taskById(x?.taskId)?.name ?? 'Eintrag'}“ gelöscht`, { undo: () => store.update(d.id, { deleted: false }), ms: 3500 });
+    render();
+  },
 
-  pickStart: () => {
+  rewardsTab: d => { ui.rewardsTab = d.val; ui.editRewards = false; render(); },
+  flip: (d, el) => {
     const c = ctx();
-    const pool = c.vouchers.filter(v => v.to === c.me.id && !v.pickedAt);
-    ui.modal = { type: 'pick', cards: shuffle(pool).slice(0, 3).map(v => v.id) };
-    render();
-  },
-  pickCard: d => {
-    const c = ctx();
-    if (!picksAvailable(c.state, c.me.id, c.vouchers)) return;
+    if (ui.flipped || !picksAvailable(c.state, c.me.id, c.vouchers)) return;
+    ui.flipped = d.id;
+    // Erst die Animation im bestehenden DOM, dann speichern; neu gezeichnet wird, wenn die Karte liegt.
+    el.classList.add('sel');
+    el.style.zIndex = 5;
+    el.parentElement.querySelectorAll('.pcard').forEach(x => { if (x !== el) x.classList.add('dim'); x.disabled = true; });
+    holdRender(900);
     store.update(d.id, { pickedAt: Date.now(), pickLevel: c.state.personal[c.me.id].level });
-    ui.modal = { type: 'revealed', id: d.id };
-    celebrate();
+    setTimeout(celebrate, 650);
+    navigator.vibrate?.(20);
+  },
+  keepCard: () => {
+    const v = store.get(ui.flipped);
+    ui.flipped = null;
+    ui.deck = null;
+    showToast(`„${v?.text ?? ''}“ liegt jetzt bei deinen Karten`);
     render();
   },
-  redeemVoucher: d => store.update(d.id, { redeemedAt: Date.now() }),
+  redeemVoucher: d => {
+    store.update(d.id, { redeemedAt: Date.now() });
+    showToast('Eingelöst. Viel Spaß!', { undo: () => store.update(d.id, { redeemedAt: null }) });
+    render();
+  },
   addVoucher: () => {
     const el = document.getElementById('voucher-text');
-    const text = el.value.trim();
-    if (!text) return el.focus();
+    const text = el?.value.trim();
+    if (!text) return el?.focus();
     const c = ctx();
     el.value = '';
     el.blur();
@@ -745,8 +1025,13 @@ const actions = {
     showToast('Liegt verdeckt im Topf');
     render();
   },
-  deleteVoucher: d => { if (confirm('Diese Überraschung aus dem Topf nehmen?')) store.update(d.id, { deleted: true }); },
+  deleteVoucher: d => {
+    store.update(d.id, { deleted: true });
+    showToast('Aus dem Topf genommen', { undo: () => store.update(d.id, { deleted: false }) });
+    render();
+  },
 
+  toggleEditRewards: () => { ui.editRewards = !ui.editRewards; render(); },
   editReward: d => { ui.modal = { type: 'reward', level: Number(d.level) }; render(); document.getElementById('reward-text')?.focus(); },
   saveReward: d => {
     const level = Number(d.level);
@@ -760,36 +1045,65 @@ const actions = {
     if (confirm('Belohnung als eingelöst markieren?')) store.update(`reward-L${d.level}`, { redeemedAt: Date.now() });
   },
 
-  startVacation: () => {
-    if (!confirm('Urlaubsmodus starten? Die Putz-Uhr bleibt für euch beide stehen, bis ihr ihn beendet.')) return;
+  statsView: d => { ui.statsView = d.val; render(); },
+  statsRange: d => { ui.statsRange = d.val; render(); },
+  histWho: d => { ui.histWho = d.val; render(); },
+
+  toggleVacation: () => {
     const settings = store.get('settings');
-    if (activePause(settings)) return;
-    store.put('settings', 'settings', { ...settings, pauses: [...(settings.pauses ?? []), { from: Date.now(), to: null }] });
-    showToast('Urlaubsmodus an. Erholt euch!');
+    if (activePause(settings)) {
+      updateSettings(s => ({ pauses: (s.pauses ?? []).map(p => (p.to ? p : { ...p, to: Date.now() })) }));
+      showToast('Willkommen zurück! Die Uhr läuft wieder.');
+    } else {
+      if (!confirm('Urlaubsmodus starten? Die Putz-Uhr bleibt für euch beide stehen, bis ihr ihn beendet.')) return;
+      updateSettings(s => ({ pauses: [...(s.pauses ?? []), { from: Date.now(), to: null }] }));
+      showToast('Urlaubsmodus an. Erholt euch!');
+    }
     render();
   },
-  endVacation: () => {
+  pointsArea: d => { ui.pointsArea = ui.pointsArea === d.val ? null : d.val; render(); },
+  stepPoints: d => {
+    const task = TASKS.find(t => t.id === d.id);
     const settings = store.get('settings');
-    store.put('settings', 'settings', { ...settings, pauses: (settings.pauses ?? []).map(p => (p.to ? p : { ...p, to: Date.now() })) });
-    showToast('Willkommen zurück! Die Uhr läuft wieder.');
-    render();
+    const cur = taskPoints(task, settings);
+    const next = d.dir === '1' ? POINT_STEPS.find(s => s > cur) : POINT_STEPS.findLast(s => s < cur);
+    if (next === undefined) return;
+    const overrides = { ...settings.pointOverrides };
+    if (next === task.points) delete overrides[task.id]; else overrides[task.id] = next;
+    updateSettings({ pointOverrides: overrides });
   },
   setMe: d => { device.me = d.id; saveDevice(); render(); },
-  share: async d => {
+  setColor: d => updatePlayer(d.id, { color: Number(d.val) }),
+  share: async () => {
+    const url = inviteLink();
     if (navigator.share) {
-      try { await navigator.share({ title: 'Unser Putzplan', text: 'Tritt unserem Putzplan bei:', url: d.link }); } catch { /* abgebrochen */ }
+      try { await navigator.share({ title: 'Putzplan', text: 'Tritt unserem Putzplan bei:', url }); } catch { /* abgebrochen */ }
     } else {
-      await navigator.clipboard?.writeText(d.link);
+      await navigator.clipboard?.writeText(url);
       showToast('Link kopiert');
       render();
     }
   },
-  copyCode: async () => { await navigator.clipboard?.writeText(device.household); showToast('Code kopiert'); render(); },
-  syncNow: () => store.sync(),
+  copyCode: async () => {
+    await navigator.clipboard?.writeText(device.household);
+    ui.copied = true;
+    render();
+    setTimeout(() => { ui.copied = false; scheduleRender(); }, 2000);
+  },
+  toggleJoin: () => { ui.joinOpen = !ui.joinOpen; render(); if (ui.joinOpen) document.getElementById('join-code')?.focus(); },
+  joinOther: () => {
+    const code = normalizeCode(document.getElementById('join-code')?.value);
+    if (!code) return;
+    if (code === device.household) { showToast('Das ist schon euer Haushalt'); return render(); }
+    if (!confirm('Diesem Haushalt beitreten? Du verlässt dann diesen Haushalt auf diesem Gerät.')) return;
+    ui.joinOpen = false;
+    joinHousehold(code);
+  },
   leave: () => {
     if (!confirm('Auf diesem Gerät abmelden? Die Daten bleiben im Haushalt erhalten. Ohne Code kommst du nicht wieder rein.')) return;
     device = {};
     saveDevice();
+    unsubscribe?.();
     store = null;
     ui.view = 'home';
     render();
@@ -799,42 +1113,19 @@ const actions = {
     const v = id => document.getElementById(id).value.trim();
     if (!v('n1') || !v('n2')) { ui.error = 'Bitte beide Namen eintragen.'; return renderSetup(); }
     ui.error = null;
-    createHousehold(v('n1'), v('e1'), v('n2'), v('e2'));
+    createHousehold(v('n1'), v('n2'));
     render();
   },
-  join: async () => {
+  join: () => {
     const code = normalizeCode(document.getElementById('join-code').value);
     if (!code) { ui.error = 'Der Code hat 20 Zeichen, z. B. ABCD-EFGH-JKMN-PQRS-TUVW.'; return renderSetup(); }
-    ui.error = null;
-    openHousehold(code);
-    render();
-    await store.sync();
-    if (!store.get('settings')) {
-      ui.error = store.status.startsWith('error') ? `Verbindung fehlgeschlagen: ${store.status}` : 'Zu diesem Code gibt es keinen Haushalt.';
-      device = {};
-      saveDevice();
-      store = null;
-    } else {
-      history.replaceState(null, '', location.pathname + location.search);
-    }
-    render();
+    joinHousehold(code);
   },
 };
 
 const changes = {
-  points: (el, d) => {
-    const settings = store.get('settings');
-    const n = Math.max(0, Math.min(200, Math.round(Number(el.value) || 0)));
-    store.put('settings', 'settings', { ...settings, pointOverrides: { ...settings.pointOverrides, [d.id]: n } });
-  },
   playerName: (el, d) => updatePlayer(d.id, { name: el.value.trim() || '?' }),
-  playerEmoji: (el, d) => updatePlayer(d.id, { emoji: el.value.trim() }),
 };
-
-function updatePlayer(id, patch) {
-  const settings = store.get('settings');
-  store.put('settings', 'settings', { ...settings, players: settings.players.map(p => (p.id === id ? { ...p, ...patch } : p)) });
-}
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
@@ -854,8 +1145,18 @@ if (DEMO) {
   const q = new URLSearchParams(location.search);
   ui.view = q.get('view') ?? ui.view;
   ui.sheet = q.get('sheet');
+  ui.rewardsTab = q.get('tab') ?? ui.rewardsTab;
 }
 render();
+
+// Einladungslink, während schon ein Haushalt offen ist: nachfragen und wechseln.
+const linkCode = normalizeCode(joinParam());
+if (store && linkCode) {
+  if (linkCode !== device.household && !DEMO &&
+      confirm('Du hast einen Einladungslink geöffnet. Diesem Haushalt beitreten? Du verlässt dann deinen bisherigen Haushalt auf diesem Gerät.')) {
+    joinHousehold(linkCode);
+  } else cleanUrl();
+}
 
 if (CLOUD) {
   const syncIfVisible = () => { if (store && document.visibilityState === 'visible') store.sync(); };

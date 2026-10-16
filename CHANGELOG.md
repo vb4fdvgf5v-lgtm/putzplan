@@ -2,6 +2,11 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.0 (16.10.)
+- Neues Design: dunkel, ruhiger, mit Füllständen pro Bereich statt einer langen roten Liste
+- „Heute“ zeigt die drei Aufgaben, die sich gerade am meisten lohnen; alle Bereiche lassen sich aufklappen, abhaken geht mit einem Tipp auf die Punkte
+- Überraschungskarten zieht man jetzt mit Umdreh-Effekt; Belohnungen haben drei Reiter, Statistik zeigt „Wer macht was?“; in den Einstellungen wählt jeder seine Farbe
+
 ## 1.3 (10.10.)
 - Neu: „Alltag“ auf der Startseite. Abwaschen, Arbeitsfläche abwischen und Geschirrspüler ausräumen mit einem Tipp abhaken (max. 2× am Tag, wird nie überfällig)
 - Müll ist jetzt nach Sorten getrennt: Restmüll, Bio, Plastik, Papier, Glas
