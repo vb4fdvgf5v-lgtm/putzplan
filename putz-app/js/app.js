@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.4.1';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
@@ -754,7 +754,8 @@ function modalHtml(c) {
 function toastHtml() {
   const t = ui.toast;
   if (!t) return '';
-  return `<div class="toast${ui.view === 'home' ? ' high' : ''}" role="status"><span class="t"><b>${esc(t.text)}</b>${t.sub ? `<span>${esc(t.sub)}</span>` : ''}</span>
+  // Negative Verzögerung: Beim Neuzeichnen läuft die Einblendung weiter, statt neu zu starten.
+  return `<div class="toast${ui.view === 'home' ? ' high' : ''}" style="animation-delay:-${Date.now() - t.at}ms" role="status"><span class="t"><b>${esc(t.text)}</b>${t.sub ? `<span>${esc(t.sub)}</span>` : ''}</span>
     ${t.undo ? '<button data-action="undo">Rückgängig</button>' : ''}</div>`;
 }
 
@@ -943,7 +944,7 @@ function celebrate() {
 
 let toastTimer;
 function showToast(text, { sub = '', undo = null, ms: duration = 3800 } = {}) {
-  ui.toast = { text, sub, undo };
+  ui.toast = { text, sub, undo, at: Date.now() };
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { ui.toast = null; scheduleRender(); }, duration);
 }

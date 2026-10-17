@@ -2,6 +2,9 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.4.1 (17.10.)
+- Die kleine Nachricht nach dem Abhaken flackert nicht mehr
+
 ## 2.4 (17.10.)
 - Beim Anlegen einer Aufgabe springt das Fenster nicht mehr hin und her: Es bleibt oben, und die Tastatur kommt erst, wenn du ins Namensfeld tippst
 
