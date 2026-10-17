@@ -2,6 +2,9 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.3 (17.10.)
+- Neue Aufgaben legt man jetzt über einen eigenen Knopf unter Einstellungen → Aufgaben an und wählt dort den Bereich aus
+
 ## 2.2 (17.10.)
 - Aufgaben lassen sich jetzt immer abhaken, auch wenn sie noch nicht wieder dran sind, und es gibt volle Punkte
 - Eigene Aufgaben anlegen, Aufgaben umbenennen, Intervall ändern oder ausblenden: unter Einstellungen → Aufgaben

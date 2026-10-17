@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.2';
+const APP_VERSION = '2.3';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
