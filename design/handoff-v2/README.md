@@ -287,5 +287,6 @@ Reihenfolge von oben nach unten:
 6. Committen. Danach schreibt Claude die Release-Notes im vorgegebenen Format in den Chat; der Nutzer pusht selbst.
 
 ## Dateien in diesem Paket
+- `icons/icon.svg`, `icons/icon-180.png`, `icons/icon-192.png`, `icons/icon-512.png`: neues App-Icon („Abendglanz“, 3D-Haus). 1:1 nach `putz-app/icons/` kopieren (gleiche Dateinamen), `VERSION` in `sw.js` hochzählen. iOS übernimmt ein neues Home-Bildschirm-Icon erst, wenn die App vom Home-Bildschirm entfernt und neu hinzugefügt wird; das in den Release-Notes erwähnen. Optional `theme-color` bleibt `#0d1012`.
 - `Putzplan Redesign.dc.html`: interaktive Design-Referenz (maßgeblich: 3a, 4c, 5b, 7a).
 - `support.js`: Laufzeit für die Referenzdatei (nur zum Ansehen, nicht in die App übernehmen).

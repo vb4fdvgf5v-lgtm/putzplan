@@ -1,5 +1,5 @@
 // Offline-Cache für die App-Dateien. Bei Änderungen VERSION hochzählen.
-const VERSION = 'putzplan-v12';
+const VERSION = 'putzplan-v13';
 const FONTS = 'putzplan-fonts-v1';
 const ASSETS = ['./', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png',
   'js/app.js', 'js/game.js', 'js/tasks.js', 'js/store.js', 'js/config.js'];

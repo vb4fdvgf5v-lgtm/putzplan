@@ -2,6 +2,9 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.1 (17.10.)
+- Neues App-Icon: ein Häuschen im Abendglanz. Auf dem Home-Bildschirm erscheint es erst, wenn man die App dort entfernt und neu hinzufügt
+
 ## 2.0 (16.10.)
 - Neues Design: dunkel, ruhiger, mit Füllständen pro Bereich statt einer langen roten Liste
 - „Heute“ zeigt die drei Aufgaben, die sich gerade am meisten lohnen; alle Bereiche lassen sich aufklappen, abhaken geht mit einem Tipp auf die Punkte
