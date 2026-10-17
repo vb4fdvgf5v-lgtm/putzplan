@@ -628,8 +628,7 @@ function viewSettings(c) {
             <b class="${isChanged ? 'changed' : ''}">${p}</b>
             <button data-action="stepPoints" data-id="${t.id}" data-dir="1" ${p >= POINT_STEPS.at(-1) ? 'disabled' : ''} aria-label="mehr Punkte">${ms('add')}</button>
           </span>`}</div>`;
-      }).join('')}
-        <button class="pt-add" data-action="newTask" data-area="${k}">${ms('add')}Aufgabe hinzufügen</button></div>` : ''}
+      }).join('')}</div>` : ''}
     </div>`;
   };
 
@@ -657,6 +656,7 @@ function viewSettings(c) {
     <section class="stack">
       ${sec('Aufgaben', hint('antippen zum Bearbeiten'))}
       <div class="card rows" style="overflow:hidden">${Object.keys(AREAS).map(areaBlock).join('')}</div>
+      <button class="pill mid" data-action="newTask">${ms('add')}Aufgabe hinzufügen</button>
     </section>
 
     <section class="stack">
@@ -727,8 +727,13 @@ function modalHtml(c) {
     const t = m.id ? taskById(m.id) : null;
     const std = t?.standard;
     const resettable = std && (m.name !== std.name || m.interval !== std.interval || m.points !== std.points);
-    body = `<div class="sheet-area">${tile(m.area, 't38')}${AREAS[m.area].name}</div>
-      <h2>${t ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'}</h2>
+    // Bereich wählbar bei neuen und eigenen Aufgaben; eingebaute behalten ihren Bereich.
+    const areaPick = !t || t.custom
+      ? `<div class="area-pick">${Object.entries(AREAS).map(([k, a]) =>
+          `<button class="${m.area === k ? 'on' : ''}" data-action="taskDraft" data-key="area" data-val="${k}" aria-pressed="${m.area === k}">${tile(k, 't38')}<span>${a.name}</span></button>`).join('')}</div>`
+      : `<div class="sheet-area">${tile(m.area, 't38')}${AREAS[m.area].name}</div>`;
+    body = `<h2>${t ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'}</h2>
+      ${areaPick}
       <input id="task-name" class="field" maxlength="60" value="${esc(m.name)}" placeholder="z. B. Balkon fegen" aria-label="Name">
       <div class="seg tall task-iv">${Object.entries(INTERVALS).map(([k, v]) =>
         `<button class="${m.interval === k ? 'on' : ''}" data-action="taskDraft" data-key="interval" data-val="${k}">${v.label}</button>`).join('')}</div>
@@ -994,9 +999,9 @@ const isAdjusted = (t, settings) => Boolean(t.standard) &&
   (t.name !== t.standard.name || t.interval !== t.standard.interval || taskPoints(t, settings) !== t.standard.points);
 
 /** Änderungen an einer Aufgabe speichern. Eingebaute: nur Abweichungen, Punkte in pointOverrides. */
-function saveTask(task, { name = task.name, interval = task.interval, points }) {
+function saveTask(task, { name = task.name, interval = task.interval, points, area = task.area }) {
   const item = store.get(task.id);
-  if (task.custom) return store.put('task', task.id, { ...item, name, interval, points: points ?? task.points });
+  if (task.custom) return store.put('task', task.id, { ...item, name, interval, area, points: points ?? task.points });
   const std = task.standard;
   const diff = { ...item, name, interval };
   if (name === std.name) delete diff.name;
@@ -1117,7 +1122,7 @@ const actions = {
     if (next !== undefined) saveTask(task, { points: next });
   },
   newTask: d => {
-    ui.modal = { type: 'task', id: null, area: d.area, name: '', interval: 'W', points: 10 };
+    ui.modal = { type: 'task', id: null, area: ui.pointsArea ?? Object.keys(AREAS)[0], name: '', interval: 'W', points: 10 };
     render();
     document.getElementById('task-name')?.focus();
   },
@@ -1128,7 +1133,7 @@ const actions = {
   },
   taskDraft: d => {
     const m = ui.modal;
-    if (d.key === 'interval') m.interval = d.val;
+    if (d.key === 'interval' || d.key === 'area') m[d.key] = d.val;
     else m.points = stepPoint(m.points, d.dir) ?? m.points;
     render();
   },
@@ -1143,11 +1148,12 @@ const actions = {
     if (!name) return document.getElementById('task-name')?.focus();
     ui.modal = null;
     if (m.id) {
-      saveTask(taskById(m.id), { name, interval: m.interval, points: m.points });
+      saveTask(taskById(m.id), { name, interval: m.interval, points: m.points, area: m.area });
       showToast('Gespeichert');
     } else {
       const id = uid('u');
       store.put('task', id, { custom: true, area: m.area, name, interval: m.interval, points: m.points, since: Date.now() });
+      ui.pointsArea = m.area;
       showToast(`„${name}“ hinzugefügt`, { undo: () => store.update(id, { deleted: true }) });
     }
     render();
