@@ -33,8 +33,11 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage v
 ## Versionen und Release-Notes
 
 - Jede Veröffentlichung mit sichtbaren Änderungen bekommt eine neue Version: `APP_VERSION` in
-  `putz-app/js/app.js` hochzählen (1.3 → 1.4; neue große Funktion oder Umbau → 2.0) und oben in
-  [CHANGELOG.md](CHANGELOG.md) eintragen. Reine Technik-Änderungen ohne sichtbaren Effekt: keine neue Version.
+  `putz-app/js/app.js` hochzählen und oben in [CHANGELOG.md](CHANGELOG.md) eintragen:
+  kleiner Fix → Patch (2.3 → 2.3.1), neue Funktion → Minor (2.3 → 2.4), großer Umbau → Major (2.x → 3.0).
+  Reine Technik-Änderungen ohne sichtbaren Effekt: keine neue Version.
+  Vor dem Festlegen mit `git status -sb` im Haupt-Checkout prüfen, ob die letzte Version schon gepusht ist;
+  wenn nicht, die Änderung in diese Version aufnehmen statt eine neue anzulegen.
 - **Nach jedem Commit, den der Nutzer pushen soll, Release-Notes direkt im Chat schreiben**, zum
   Weiterschicken an die Mitbewohnerin. Format:
   - Erste Zeile: `Putzplan 1.4 ist da 🎉` (bzw. die neue Versionsnummer)
