@@ -7,7 +7,7 @@ export const RULES = {
   penaltyRate: 0.1,     // pro überfälligem Tag: 10 % der Aufgabenpunkte Abzug fürs Team
   penaltyCapDays: 10,   // nach 10 Tagen ist der Abzug gedeckelt (= 100 % der Punkte)
   rescueBonus: 0.5,     // +50 % aufs persönliche Level, wenn man eine überfällige Aufgabe erledigt
-  earlyFraction: 0.5,   // Punkte erst wieder, wenn die Hälfte des Intervalls um ist
+  freshFraction: 0.5,   // bis zur Hälfte des Intervalls gilt eine Aufgabe als frisch (nur Anzeige und Sortierung)
 };
 
 export const PERSONAL = {
@@ -40,6 +40,24 @@ export function personalTitle(level) {
 }
 
 export const taskPoints = (task, settings) => settings?.pointOverrides?.[task.id] ?? task.points;
+
+/**
+ * Katalog mit den Änderungen aus der App. Items (kind "task", id = Aufgaben-ID):
+ * zu eingebauten Aufgaben nur Abweichungen (name, interval, hidden), eigene Aufgaben komplett mit custom: true.
+ * `since`: ab da läuft die Uhr der Aufgabe (beim Anlegen und Wiedereinblenden gesetzt).
+ * Punkte eingebauter Aufgaben bleiben in settings.pointOverrides.
+ */
+export function buildCatalog(base, items = []) {
+  const byId = new Map(items.map(i => [i.id, i]));
+  const pick = ({ name, interval, hidden, since } = {}) =>
+    Object.fromEntries(Object.entries({ name, interval, hidden, since }).filter(([, v]) => v !== undefined));
+  const builtIn = base.map(t => ({ ...t, ...pick(byId.get(t.id)), standard: t }));
+  const custom = items.filter(i => i.custom && !base.some(t => t.id === i.id))
+    .map(({ id, area, interval, points, name, hidden, since }) => ({ id, area, interval, points, name, hidden, since, custom: true }))
+    .sort((a, b) => (a.since ?? 0) - (b.since ?? 0));
+  const all = [...builtIn, ...custom].filter(t => INTERVALS[t.interval]);
+  return { all, active: all.filter(t => !t.hidden) };
+}
 const intervalMs = task => INTERVALS[task.interval].days * DAY;
 
 export function weekStart(now) {
@@ -84,6 +102,7 @@ export function pauseClock(pauses = [], now) {
 /**
  * Wertet den kompletten Verlauf aus.
  * Zu Beginn gilt jede Aufgabe als halb frisch, damit nicht alles sofort überfällig ist.
+ * Das gilt auch für später angelegte oder wieder eingeblendete Aufgaben (task.since).
  */
 export function compute({ tasks, completions, settings, players, now }) {
   const start = settings.startedAt;
@@ -106,7 +125,8 @@ export function compute({ tasks, completions, settings, players, now }) {
       const days = Math.min(RULES.penaltyCapDays, Math.floor((until - due) / DAY));
       for (let d = 1; d <= days; d++) ticks.push({ at: toReal(due + d * DAY), amount: p * RULES.penaltyRate });
     };
-    let last = toEff(start) - iv / 2;
+    const begin = Math.max(start, task.since ?? 0);
+    let last = toEff(begin) - iv / 2;
     for (const c of list) { const at = toEff(c.at); accrue(last + iv, at); last = Math.max(last, at); }
     accrue(last + iv, nowE);
 
@@ -116,11 +136,11 @@ export function compute({ tasks, completions, settings, players, now }) {
     const lastC = list[list.length - 1];
     status[task.id] = {
       points: p, freshness, overdueDays,
-      last: lastC ? lastC.at : start,
+      last: lastC ? lastC.at : begin,
       due: toReal(due),
       overdue: nowE > due,
       penaltyPerDay: !paused && nowE > due && overdueDays < RULES.penaltyCapDays ? p * RULES.penaltyRate : 0,
-      earlyUntil: lastC ? toReal(last + iv * RULES.earlyFraction) : 0,
+      freshUntil: lastC ? toReal(last + iv * RULES.freshFraction) : 0,
       lastBy: lastC?.player ?? null,
       count: list.length,
     };

@@ -2,6 +2,11 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.2 (17.10.)
+- Aufgaben lassen sich jetzt immer abhaken, auch wenn sie noch nicht wieder dran sind, und es gibt volle Punkte
+- Eigene Aufgaben anlegen, Aufgaben umbenennen, Intervall ändern oder ausblenden: unter Einstellungen → Aufgaben
+- Neu im Alltag: „Wäsche waschen“ (1× am Tag). Wäsche hell und dunkel fallen dafür weg, Heißwäsche bleibt. Die Alltag-Kacheln lassen sich jetzt seitlich wischen
+
 ## 2.1 (17.10.)
 - Neues App-Icon: ein Häuschen im Abendglanz. Auf dem Home-Bildschirm erscheint es erst, wenn man die App dort entfernt und neu hinzufügt
 

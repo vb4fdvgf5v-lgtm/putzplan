@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TASKS } from '../js/tasks.js';
-import { compute, DAY, rewardFairness, picksAvailable, levelInfo, PERSONAL, areaSummary, focusTasks, pointsByArea } from '../js/game.js';
+import { compute, buildCatalog, DAY, rewardFairness, picksAvailable, levelInfo, PERSONAL, areaSummary, focusTasks, pointsByArea } from '../js/game.js';
 
 const players = [{ id: 'a' }, { id: 'b' }];
 const start = Date.UTC(2026, 9, 1);
@@ -109,4 +109,37 @@ test('Punkte je Bereich und Person', () => {
   ];
   const areaOf = id => ({ x: 'bad', z: 'kueche' })[id];
   assert.deepEqual(pointsByArea(done, 2, areaOf, players), { bad: { a: 10, b: 10 }, kueche: { a: 3, b: 0 } });
+});
+
+test('vor der Fälligkeit erledigen: volle Punkte, Uhr startet neu', () => {
+  const c = { taskId: wc.id, player: 'a', at: start + DAY, points: 20, rescue: false };
+  const s = run([c, { ...c, at: start + 2 * DAY }], start + 2 * DAY);
+  assert.equal(s.xp.a, 40);
+  assert.equal(s.status[wc.id].due, start + 9 * DAY);
+});
+
+test('Katalog: Anpassungen, Ausblenden und eigene Aufgaben', () => {
+  const cat = buildCatalog(TASKS, [
+    { id: wc.id, name: 'Dusche', interval: 'M' },
+    { id: 'k-herd', hidden: true },
+    { id: 'u-1', custom: true, area: 'wohnen', interval: 'W', points: 10, name: 'Balkon fegen', since: start },
+    { id: 'u-2', custom: true, area: 'wohnen', interval: 'X', points: 10, name: 'kaputt' },
+  ]);
+  const dusche = cat.all.find(t => t.id === wc.id);
+  assert.equal(dusche.name, 'Dusche');
+  assert.equal(dusche.interval, 'M');
+  assert.equal(dusche.standard.name, wc.name);
+  assert.equal(cat.active.some(t => t.id === 'k-herd'), false);
+  assert.equal(cat.all.some(t => t.id === 'k-herd'), true);
+  assert.equal(cat.active.find(t => t.id === 'u-1').name, 'Balkon fegen');
+  assert.equal(cat.all.some(t => t.id === 'u-2'), false);
+  assert.equal(cat.active.length, TASKS.length);
+});
+
+test('später angelegte Aufgabe startet halb frisch, ohne rückwirkende Abzüge', () => {
+  const task = { id: 'u-1', area: 'wohnen', interval: 'W', points: 10, since: start + 60 * DAY };
+  const s = compute({ tasks: [task], completions: [], settings: { startedAt: start }, players, now: start + 60 * DAY });
+  assert.equal(s.status[task.id].overdue, false);
+  assert.equal(s.penaltyTotal, 0);
+  assert.equal(s.status[task.id].due, start + 63.5 * DAY);
 });

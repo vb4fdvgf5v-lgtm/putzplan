@@ -12,10 +12,12 @@ export const AREAS = {
 
 // Alltag: fällt (fast) täglich an. Kein Intervall, keine Fälligkeit, keine Minuspunkte,
 // nur ein Tipp auf der Startseite. Das Tageslimit verhindert Punkte-Sammeln durch Dauertippen.
+// \u00AD = weiche Trennstelle für die schmalen Kacheln.
 export const DAILY = [
   { id: 'a-abwasch', area: 'kueche', icon: 'soap', name: 'Abwaschen', points: 3, perDay: 2 },
-  { id: 'a-arbeitsflaeche', area: 'kueche', icon: 'countertops', name: 'Arbeitsfläche abwischen', points: 2, perDay: 2 },
-  { id: 'a-spuelmaschine', area: 'kueche', icon: 'dishwasher_gen', name: 'Geschirrspüler ausräumen', points: 2, perDay: 2 },
+  { id: 'a-arbeitsflaeche', area: 'kueche', icon: 'countertops', name: 'Arbeits\u00ADfläche abwischen', points: 2, perDay: 2 },
+  { id: 'a-spuelmaschine', area: 'kueche', icon: 'dishwasher_gen', name: 'Geschirr\u00ADspüler ausräumen', points: 2, perDay: 2 },
+  { id: 'a-waesche', area: 'bad', icon: 'local_laundry_service', name: 'Wäsche waschen', points: 5, perDay: 1 },
 ];
 
 export const INTERVALS = {
@@ -51,8 +53,6 @@ export const TASKS = [
   ...perBath('b-boden', 'W', 10, 'Boden feucht wischen'),
   ...perBath('b-spiegel', 'W', 5, 'Spiegel putzen'),
   t('b-handtuecher', 'bad', 'W', 3, 'Handtücher und Badematten wechseln'),
-  t('b-waesche-hell', 'bad', 'W', 10, 'Wäsche hell'),
-  t('b-waesche-dunkel', 'bad', 'W', 10, 'Wäsche dunkel'),
   t('b-waesche-heiss', 'bad', 'W', 10, 'Wäsche heiß'),
   t('w-teppich', 'wohnen', 'W', 10, 'Teppich im Wohnzimmer saugen'),
   t('w-ecken', 'wohnen', 'W', 15, 'Ecken und Kanten saugen'),
@@ -108,4 +108,10 @@ export const TASKS = [
   t('w-rauchmelder', 'wohnen', 'Q', 3, 'Rauchmelder testen'),
   t('p-schaedlinge', 'pflanzen', 'Q', 60, 'Schädlinge prüfen, umtopfen'),
   t('r-verschleiss', 'robo', 'Q', 10, 'Verschleißteile tauschen, Station reinigen'),
+];
+
+// Gestrichene Aufgaben: nicht mehr im Plan, aber der Verlauf soll Namen und Bereich weiter kennen.
+export const RETIRED = [
+  t('b-waesche-hell', 'bad', 'W', 10, 'Wäsche hell'),
+  t('b-waesche-dunkel', 'bad', 'W', 10, 'Wäsche dunkel'),
 ];

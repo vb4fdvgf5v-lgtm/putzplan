@@ -1,5 +1,5 @@
-import { TASKS, DAILY, AREAS, INTERVALS } from './tasks.js';
-import { compute, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, taskPoints,
+import { TASKS, DAILY, RETIRED, AREAS, INTERVALS } from './tasks.js';
+import { compute, buildCatalog, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, taskPoints,
   areaSummary, focusTasks, pointsByArea, weekStart, monthStart, DAY, RULES, TEAM } from './game.js';
 import { createStore, cloudEnabled } from './store.js';
 
@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
@@ -48,7 +48,9 @@ const fmtDateTime = ts => `${fmtDay(ts)}, ${fmtTime(ts)}`;
 const pct = x => Math.round(x * 100);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
-const taskById = id => TASKS.find(t => t.id === id) ?? DAILY.find(t => t.id === id);
+// Aktueller Katalog inkl. eigener und ausgeblendeter Aufgaben, bei jedem ctx() neu aufgebaut.
+let catalog = buildCatalog(TASKS);
+const taskById = id => [catalog.all, DAILY, RETIRED].flat().find(t => t.id === id);
 const areaOf = id => taskById(id)?.area;
 const iconOf = id => { const t = taskById(id); return t?.icon ?? AREAS[t?.area]?.icon ?? 'check'; };
 const startOfDay = ts => new Date(ts).setHours(0, 0, 0, 0);
@@ -88,9 +90,11 @@ function ctx() {
   const settings = store.get('settings');
   const players = settings.players;
   const now = Date.now();
-  const state = compute({ tasks: TASKS, completions: store.list('completion'), settings, players, now });
+  catalog = buildCatalog(TASKS, store.list('task'));
+  const tasks = catalog.active;
+  const state = compute({ tasks, completions: store.list('completion'), settings, players, now });
   return {
-    settings, players, now, state,
+    settings, players, now, state, tasks, allTasks: catalog.all,
     me: players.find(p => p.id === device.me),
     partner: players.find(p => p.id !== device.me),
     name: id => players.find(p => p.id === id),
@@ -123,16 +127,14 @@ function dueMeta(s, now, paused) {
     const cost = paused ? ' · pausiert' : s.penaltyPerDay ? ` · −${fmtDec(s.penaltyPerDay)}/Tag` : '';
     return `<span class="od">${days}</span>${cost}`;
   }
-  if (now < s.earlyUntil) return `frisch · wieder ab ${fmtDate(s.earlyUntil)}`;
   const d = Math.ceil((s.due - now) / DAY);
-  return d <= 0 ? 'heute fällig' : d === 1 ? 'morgen fällig' : `in ${d} Tagen fällig`;
+  const fresh = now < s.freshUntil ? 'frisch · ' : '';
+  return fresh + (d <= 0 ? 'heute fällig' : d === 1 ? 'morgen fällig' : `in ${d} Tagen fällig`);
 }
 
-const ptsButton = (t, s, now, cls = '') => {
-  const early = now < s.earlyUntil;
-  return `<button class="pts ${cls}" data-action="quick" data-id="${t.id}" ${early ? 'disabled' : ''}
+const ptsButton = (t, s, cls = '') =>
+  `<button class="pts ${cls}" data-action="quick" data-id="${t.id}"
     aria-label="${esc(t.name)} erledigt, ${s.points} Punkte">+${s.points}</button>`;
-};
 
 // Aufgabenzeile in der Bereichsliste und in den Suchtreffern: Name öffnet das Sheet, Pille erledigt direkt.
 const taskLine = (t, c) => {
@@ -140,7 +142,7 @@ const taskLine = (t, c) => {
   return `<div class="atask">
     <button class="tmain" data-action="open" data-id="${t.id}">
       <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(s, c.now, c.state.paused)}</span>
-    </button>${ptsButton(t, s, c.now, 'sm')}</div>`;
+    </button>${ptsButton(t, s, 'sm')}</div>`;
 };
 
 function vacationBanner(c) {
@@ -155,7 +157,7 @@ function vacationBanner(c) {
 // Suche: Groß/Klein und Umlaute egal („spuele“ findet „Spüle“), alle Wörter müssen vorkommen.
 const fold = s => String(s).toLowerCase()
   .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
-  .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  .normalize('NFD').replace(/[̀-ͯ\u00AD]/g, '');
 function matchesSearch(t, query) {
   const hay = fold(`${t.name} ${AREAS[t.area].name} ${INTERVALS[t.interval].label}`);
   return fold(query).split(/\s+/).filter(Boolean).every(word => hay.includes(word));
@@ -165,8 +167,8 @@ function searchResults(c) {
   const query = ui.search.trim();
   if (!query) return '';
   const st = id => c.state.status[id];
-  const order = t => (st(t.id).overdue ? 0 : c.now >= st(t.id).earlyUntil ? 1 : 2);
-  const hits = TASKS.filter(t => matchesSearch(t, query))
+  const order = t => (st(t.id).overdue ? 0 : c.now >= st(t.id).freshUntil ? 1 : 2);
+  const hits = c.tasks.filter(t => matchesSearch(t, query))
     .sort((a, b) => order(a) - order(b) || st(a.id).due - st(b.id).due);
   return hits.length
     ? hits.map(t => taskLine(t, c)).join('')
@@ -182,11 +184,11 @@ function viewHome(c) {
   const { state, me, now } = c;
   const st = id => state.status[id];
   const pi = state.personal[me.id];
-  const areas = areaSummary(TASKS, state.status);
+  const areas = areaSummary(c.tasks, state.status);
   const keys = Object.keys(AREAS);
   const totalWeight = keys.reduce((s, k) => s + areas[k].weight, 0);
   const behind = keys.filter(k => areas[k].overdue).length;
-  const overdueTotal = TASKS.filter(t => st(t.id).overdue).length;
+  const overdueTotal = c.tasks.filter(t => st(t.id).overdue).length;
   const worst = keys.reduce((a, b) => (areas[b].freshness < areas[a].freshness ? b : a));
   const headline = state.paused ? 'Urlaub. Die Uhr steht, nichts wird überfällig.'
     : areas[worst].freshness >= 0.9 ? 'Alles frisch. Stark!'
@@ -214,21 +216,21 @@ function viewHome(c) {
     </button>`;
   };
 
-  let focus = focusTasks(TASKS, state.status);
+  let focus = focusTasks(c.tasks, state.status);
   let focusTitle = 'Lohnt sich jetzt', focusHint = `Rettung +${pct(RULES.rescueBonus)} %`;
   if (!focus.length) {
-    focus = TASKS.filter(t => now >= st(t.id).earlyUntil).sort((a, b) => st(a.id).due - st(b.id).due).slice(0, 3);
+    focus = c.tasks.filter(t => now >= st(t.id).freshUntil).sort((a, b) => st(a.id).due - st(b.id).due).slice(0, 3);
     focusTitle = 'Als Nächstes';
     focusHint = 'nichts überfällig';
   }
   const focusRow = t => `<div class="frow">${tile(t.area)}
       <button class="tmain" data-action="open" data-id="${t.id}">
         <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(st(t.id), now, state.paused)}</span>
-      </button>${ptsButton(t, st(t.id), now)}</div>`;
+      </button>${ptsButton(t, st(t.id))}</div>`;
 
   const areaRow = k => {
     const open = ui.openArea === k;
-    const tasks = TASKS.filter(t => t.area === k).sort((a, b) => st(a.id).due - st(b.id).due);
+    const tasks = c.tasks.filter(t => t.area === k).sort((a, b) => st(a.id).due - st(b.id).due);
     const status = areas[k].overdue ? `<span class="od">${areas[k].overdue} überfällig</span>` : 'alles im Plan';
     return `<div id="area-${k}" class="${open ? 'open' : ''}">
       <button class="acc-head" data-action="openArea" data-val="${k}" aria-expanded="${open}">
@@ -606,23 +608,28 @@ function viewSettings(c) {
   }
 
   const areaBlock = k => {
-    const tasks = TASKS.filter(t => t.area === k);
-    const changed = tasks.filter(t => taskPoints(t, settings) !== t.points).length;
+    const tasks = c.allTasks.filter(t => t.area === k);
+    const shown = tasks.filter(t => !t.hidden).length;
+    const changed = tasks.filter(t => isAdjusted(t, settings)).length;
     const open = ui.pointsArea === k;
     return `<div class="${open ? 'open' : ''}">
       <button class="acc-head pt-head" data-action="pointsArea" data-val="${k}" aria-expanded="${open}">${tile(k, 't40')}
-        <span class="grow"><b>${AREAS[k].name}</b><span>${plural(tasks.length, 'Aufgabe', 'Aufgaben')}${changed ? ` · ${changed} angepasst` : ''}</span></span>
+        <span class="grow"><b>${AREAS[k].name}</b><span>${plural(shown, 'Aufgabe', 'Aufgaben')}${changed ? ` · ${changed} angepasst` : ''}</span></span>
         ${ms('expand_more', 'chev outline')}</button>
       ${open ? `<div class="pt-body">${tasks.map(t => {
         const p = taskPoints(t, settings);
-        const isChanged = p !== t.points;
-        return `<div class="pt-row"><span class="grow"><b>${esc(t.name)}</b><span>${INTERVALS[t.interval].label}${isChanged ? ` · Standard ${t.points}` : ''}</span></span>
-          <span class="stepper">
+        const isChanged = Boolean(t.standard) && p !== t.standard.points;
+        const meta = t.hidden ? 'ausgeblendet'
+          : `${INTERVALS[t.interval].label}${t.custom ? ' · eigene' : isAdjusted(t, settings) ? ' · angepasst' : ''}`;
+        return `<div class="pt-row${t.hidden ? ' off' : ''}">
+          <button class="grow" data-action="editTask" data-id="${t.id}"><b>${esc(t.name)}</b><span>${meta}</span></button>
+          ${t.hidden ? `<button class="pt-show" data-action="editTask" data-id="${t.id}">${ms('visibility_off')}</button>` : `<span class="stepper">
             <button data-action="stepPoints" data-id="${t.id}" data-dir="-1" ${p <= POINT_STEPS[0] ? 'disabled' : ''} aria-label="weniger Punkte">${ms('remove')}</button>
             <b class="${isChanged ? 'changed' : ''}">${p}</b>
             <button data-action="stepPoints" data-id="${t.id}" data-dir="1" ${p >= POINT_STEPS.at(-1) ? 'disabled' : ''} aria-label="mehr Punkte">${ms('add')}</button>
-          </span></div>`;
-      }).join('')}</div>` : ''}
+          </span>`}</div>`;
+      }).join('')}
+        <button class="pt-add" data-action="newTask" data-area="${k}">${ms('add')}Aufgabe hinzufügen</button></div>` : ''}
     </div>`;
   };
 
@@ -648,7 +655,7 @@ function viewSettings(c) {
     </section>
 
     <section class="stack">
-      ${sec('Punkte anpassen', hint('nach Schwierigkeit'))}
+      ${sec('Aufgaben', hint('antippen zum Bearbeiten'))}
       <div class="card rows" style="overflow:hidden">${Object.keys(AREAS).map(areaBlock).join('')}</div>
     </section>
 
@@ -657,7 +664,7 @@ function viewSettings(c) {
       <div class="card lcard rows">
         ${rule('hourglass_bottom', 'od', 'Liegenlassen kostet', `Überfällige Aufgaben kosten das Team pro Tag ${pct(RULES.penaltyRate)} % ihrer Punkte, höchstens ${RULES.penaltyCapDays} Tage lang.`)}
         ${rule('volunteer_activism', 'soft', 'Retten lohnt sich', `Wer eine überfällige Aufgabe erledigt, bekommt +${pct(RULES.rescueBonus)} % aufs persönliche Level.`)}
-        ${rule('schedule', 'info', 'Nicht zu früh', RULES.earlyFraction === 0.5 ? 'Punkte gibt es erst wieder, wenn die Hälfte des Intervalls vorbei ist.' : `Punkte gibt es erst wieder, wenn ${pct(RULES.earlyFraction)} % des Intervalls vorbei sind.`)}
+        ${rule('schedule', 'info', 'Jederzeit erledigen', 'Aufgaben lassen sich auch vor der Fälligkeit abhaken. Ihre Uhr startet dann neu.')}
         ${rule('balance', 'partner', 'Fair teilen', 'Team-Belohnungen sind einlösbar, wenn beide seit dem letzten Level mind. ein Drittel beigetragen haben.')}
       </div>
     </section>
@@ -674,7 +681,6 @@ function sheetHtml(c) {
   const t = taskById(ui.sheet);
   const st = c.state.status[t.id];
   if (!st) return '';
-  const early = c.now < st.earlyUntil;
   const xp = Math.round(st.points * (st.overdue ? 1 + RULES.rescueBonus : 1));
   const last = st.count ? `Zuletzt ${fmtDateTime(st.last)} von ${esc(c.name(st.lastBy)?.name ?? '?')}` : 'Noch nie erledigt';
   return `<div class="backdrop" data-action="closeSheet"></div>
@@ -687,9 +693,9 @@ function sheetHtml(c) {
       ${st.overdue ? (c.state.paused
         ? '<p>Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
         : `<p class="od">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
-      ${early ? `<p class="note">Noch frisch. Punkte gibt es wieder ab ${fmtDate(st.earlyUntil)}.</p>` : ''}
-      <button class="pill primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}" ${early ? 'disabled' : ''}>${ms('check')}Erledigt · +${xp}</button>
-      <button class="pill mid" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}" ${early ? 'disabled' : ''}>Von ${esc(c.partner.name)} erledigt eintragen</button>
+      ${!st.overdue && st.count ? `<p class="note">Erst am ${fmtDate(st.due)} wieder fällig. Abhaken geht trotzdem.</p>` : ''}
+      <button class="pill primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}">${ms('check')}Erledigt · +${xp}</button>
+      <button class="pill mid" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}">Von ${esc(c.partner.name)} erledigt eintragen</button>
     </div>`;
 }
 
@@ -716,6 +722,24 @@ function modalHtml(c) {
     body = `<h2>Belohnung für Team-Level ${m.level}</h2>
       <input id="reward-text" class="field" maxlength="80" value="${esc(r?.text ?? '')}" placeholder="z. B. Pizzaabend">
       <button class="pill primary big" data-action="saveReward" data-level="${m.level}">Speichern</button>
+      <button class="pill ghost" data-action="closeModal">Abbrechen</button>`;
+  } else if (m.type === 'task') {
+    const t = m.id ? taskById(m.id) : null;
+    const std = t?.standard;
+    const resettable = std && (m.name !== std.name || m.interval !== std.interval || m.points !== std.points);
+    body = `<div class="sheet-area">${tile(m.area, 't38')}${AREAS[m.area].name}</div>
+      <h2>${t ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'}</h2>
+      <input id="task-name" class="field" maxlength="60" value="${esc(m.name)}" placeholder="z. B. Balkon fegen" aria-label="Name">
+      <div class="seg tall task-iv">${Object.entries(INTERVALS).map(([k, v]) =>
+        `<button class="${m.interval === k ? 'on' : ''}" data-action="taskDraft" data-key="interval" data-val="${k}">${v.label}</button>`).join('')}</div>
+      <div class="task-pts"><span>Punkte${std && m.points !== std.points ? ` · Standard ${std.points}` : ''}</span><span class="stepper">
+        <button data-action="taskDraft" data-key="points" data-dir="-1" ${m.points <= POINT_STEPS[0] ? 'disabled' : ''} aria-label="weniger Punkte">${ms('remove')}</button>
+        <b>${m.points}</b>
+        <button data-action="taskDraft" data-key="points" data-dir="1" ${m.points >= POINT_STEPS.at(-1) ? 'disabled' : ''} aria-label="mehr Punkte">${ms('add')}</button>
+      </span></div>
+      <button class="pill primary big" data-action="saveTask">${t ? 'Speichern' : 'Hinzufügen'}</button>
+      ${resettable ? '<button class="pill ghost" data-action="resetTask">Auf Standard zurücksetzen</button>' : ''}
+      ${t ? `<button class="pill ghost" data-action="toggleHideTask">${t.hidden ? 'Wieder einblenden' : 'Ausblenden'}</button>` : ''}
       <button class="pill ghost" data-action="closeModal">Abbrechen</button>`;
   }
   return `<div class="backdrop" data-action="closeModal"></div><div class="modal" role="dialog" aria-modal="true">${body}</div>`;
@@ -786,7 +810,7 @@ function seedDemo() {
   const done = [
     ['b-wc-1', 'a', 2], ['b-wc-2', 'b', 3], ['b-dusche-1', 'b', 4], ['k-herd', 'a', 1], ['k-spuele', 'b', 1],
     ['k-arbeitsflaechen', 'a', 5], ['k-restmuell', 'b', 2], ['k-plastik', 'a', 6], ['w-teppich', 'a', 3],
-    ['w-staub-wohn', 'b', 4], ['w-aufraeumen-wohn', 'a', 1], ['b-waesche-hell', 'b', 2], ['b-waesche-dunkel', 'a', 5],
+    ['w-staub-wohn', 'b', 4], ['w-aufraeumen-wohn', 'a', 1], ['b-waesche-heiss', 'b', 2], ['a-waesche', 'a', 1],
     ['p-giessen', 'b', 3], ['r-behaelter', 'a', 6], ['k-backofen', 'b', 8], ['w-fensterbretter', 'a', 9],
     ['b-boden-1', 'b', 10], ['k-mikrowelle', 'a', 9], ['a-abwasch', 'a', 0], ['a-abwasch', 'b', 1], ['a-spuelmaschine', 'b', 0],
   ];
@@ -848,7 +872,11 @@ function render() {
   markPresence();
   const c = ctx();
   const views = { home: viewHome, rewards: viewRewards, stats: viewStats, settings: viewSettings };
+  // Die Alltag-Reihe scrollt seitlich: Position über das Neuzeichnen retten.
+  const dailyScroll = $app.querySelector('.daily-row')?.scrollLeft ?? 0;
   $app.innerHTML = `<main class="view ${ui.view}">${views[ui.view](c)}</main>${dockHtml(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
+  const row = $app.querySelector('.daily-row');
+  if (row) row.scrollLeft = dailyScroll;
 }
 
 // Während getippt wird oder eine Karte sich dreht, nicht neu zeichnen.
@@ -872,6 +900,8 @@ document.addEventListener('input', e => {
     results.hidden = !ui.search.trim();
     results.innerHTML = searchResults(ctx());
     document.querySelector('[data-action="clearSearch"]').hidden = !ui.search;
+  } else if (el.id === 'task-name' && ui.modal?.type === 'task') {
+    ui.modal.name = el.value;
   } else if (el.id === 'voucher-text') {
     document.querySelector('[data-action="addVoucher"]').disabled = !el.value.trim();
   } else if (el.id === 'join-code' && ui.view === 'settings') {
@@ -911,7 +941,6 @@ function showToast(text, { sub = '', undo = null, ms: duration = 3800 } = {}) {
 
 function complete(taskId, playerId) {
   const st = ctx().state.status[taskId];
-  if (Date.now() < st.earlyUntil) return;
   logCompletion({ taskId, player: playerId, at: Date.now(), points: st.points, rescue: st.overdue });
 }
 
@@ -958,6 +987,26 @@ function updateSettings(patch) {
 }
 function updatePlayer(id, patch) {
   updateSettings(s => ({ players: s.players.map(p => (p.id === id ? { ...p, ...patch } : p)) }));
+}
+
+const stepPoint = (cur, dir) => (dir === '1' ? POINT_STEPS.find(s => s > cur) : POINT_STEPS.findLast(s => s < cur));
+const isAdjusted = (t, settings) => Boolean(t.standard) &&
+  (t.name !== t.standard.name || t.interval !== t.standard.interval || taskPoints(t, settings) !== t.standard.points);
+
+/** Änderungen an einer Aufgabe speichern. Eingebaute: nur Abweichungen, Punkte in pointOverrides. */
+function saveTask(task, { name = task.name, interval = task.interval, points }) {
+  const item = store.get(task.id);
+  if (task.custom) return store.put('task', task.id, { ...item, name, interval, points: points ?? task.points });
+  const std = task.standard;
+  const diff = { ...item, name, interval };
+  if (name === std.name) delete diff.name;
+  if (interval === std.interval) delete diff.interval;
+  if (item || Object.keys(diff).length) store.put('task', task.id, diff);
+  if (points !== undefined) {
+    const overrides = { ...store.get('settings').pointOverrides };
+    if (points === std.points) delete overrides[task.id]; else overrides[task.id] = points;
+    updateSettings({ pointOverrides: overrides });
+  }
 }
 
 const actions = {
@@ -1063,14 +1112,55 @@ const actions = {
   },
   pointsArea: d => { ui.pointsArea = ui.pointsArea === d.val ? null : d.val; render(); },
   stepPoints: d => {
-    const task = TASKS.find(t => t.id === d.id);
-    const settings = store.get('settings');
-    const cur = taskPoints(task, settings);
-    const next = d.dir === '1' ? POINT_STEPS.find(s => s > cur) : POINT_STEPS.findLast(s => s < cur);
-    if (next === undefined) return;
-    const overrides = { ...settings.pointOverrides };
-    if (next === task.points) delete overrides[task.id]; else overrides[task.id] = next;
-    updateSettings({ pointOverrides: overrides });
+    const task = taskById(d.id);
+    const next = stepPoint(taskPoints(task, store.get('settings')), d.dir);
+    if (next !== undefined) saveTask(task, { points: next });
+  },
+  newTask: d => {
+    ui.modal = { type: 'task', id: null, area: d.area, name: '', interval: 'W', points: 10 };
+    render();
+    document.getElementById('task-name')?.focus();
+  },
+  editTask: d => {
+    const t = taskById(d.id);
+    ui.modal = { type: 'task', id: t.id, area: t.area, name: t.name, interval: t.interval, points: taskPoints(t, store.get('settings')) };
+    render();
+  },
+  taskDraft: d => {
+    const m = ui.modal;
+    if (d.key === 'interval') m.interval = d.val;
+    else m.points = stepPoint(m.points, d.dir) ?? m.points;
+    render();
+  },
+  resetTask: () => {
+    const std = taskById(ui.modal.id).standard;
+    Object.assign(ui.modal, { name: std.name, interval: std.interval, points: std.points });
+    render();
+  },
+  saveTask: () => {
+    const m = ui.modal;
+    const name = m.name.trim();
+    if (!name) return document.getElementById('task-name')?.focus();
+    ui.modal = null;
+    if (m.id) {
+      saveTask(taskById(m.id), { name, interval: m.interval, points: m.points });
+      showToast('Gespeichert');
+    } else {
+      const id = uid('u');
+      store.put('task', id, { custom: true, area: m.area, name, interval: m.interval, points: m.points, since: Date.now() });
+      showToast(`„${name}“ hinzugefügt`, { undo: () => store.update(id, { deleted: true }) });
+    }
+    render();
+  },
+  toggleHideTask: () => {
+    const t = taskById(ui.modal.id);
+    ui.modal = null;
+    const prev = store.get(t.id);
+    // Wieder eingeblendet startet die Uhr neu, damit die ausgeblendete Zeit keine Abzüge kostet.
+    store.put('task', t.id, { ...prev, hidden: !t.hidden, ...(t.hidden ? { since: Date.now() } : {}) });
+    showToast(t.hidden ? `„${t.name}“ ist wieder im Plan` : `„${t.name}“ ausgeblendet`,
+      { undo: () => (prev ? store.put('task', t.id, prev) : store.update(t.id, { deleted: true })) });
+    render();
   },
   setMe: d => { device.me = d.id; saveDevice(); render(); },
   setColor: d => updatePlayer(d.id, { color: Number(d.val) }),

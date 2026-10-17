@@ -16,7 +16,11 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage v
   eine Ansicht.
 - **Tests:** `node --test putz-app/test/game.test.mjs` nach jeder Regeländerung.
 - **Nach jeder Änderung** `VERSION` in `putz-app/sw.js` hochzählen, sonst laden die iPhones die neue Fassung nicht.
-- **Aufgaben-IDs nie ändern**, nur Namen und Punkte. Der Verlauf hängt an den IDs.
+- **Aufgaben-IDs nie ändern**, nur Namen und Punkte. Der Verlauf hängt an den IDs. Gestrichene Aufgaben
+  nach `RETIRED` in `js/tasks.js` verschieben, damit der Verlauf ihre Namen kennt.
+- Seit 2.2 lassen sich Aufgaben auch in der App anlegen, bearbeiten und ausblenden (Items `task`).
+  Was in der App angepasst ist, überschreibt `js/tasks.js`. Vor Änderungen am Katalog also bedenken,
+  dass der echte Haushalt eigene Anpassungen haben kann.
 - **Deploy:** Claude committet (lokale Git-Identität ist die anonyme GitHub-Noreply-Adresse,
   nie die Firmenadresse). Pushen macht der Nutzer selbst über GitHub Desktop („Push origin"),
   auf diesem Mac ist kein GitHub-Login für die Kommandozeile eingerichtet. GitHub Pages
@@ -55,7 +59,7 @@ Gestrichenes löschen, Neues mit sauberer ID anlegen).
 - Minuspunkte nur fürs Team, persönliches Level ohne Aufholbonus
 - Überraschungskarten vom Partner, verdeckt aus bis zu 3 ziehen
 - Urlaubsmodus pausiert die Uhr für den ganzen Haushalt
-- Alltag: 3 tägliche Ein-Tipp-Aufgaben, max. 2× pro Tag, keine Fälligkeit
+- Alltag: tägliche Ein-Tipp-Aufgaben (Küche 3×, max. 2× pro Tag; Wäsche waschen max. 1× pro Tag), keine Fälligkeit
 - Design 2.0: nur Dunkelmodus (Hellmodus vorerst nicht), Personen als Initiale mit wählbarer Farbe statt Emoji
 - Einladen: langer Haushaltscode bleibt (er ist der Schlüssel zu den Daten), Hauptweg ist der Link `?join=CODE`;
   kein kurzer Code mit Ablauf. „Verbunden“ erkennt die App am Item `presence-<Spieler>`, das jedes Gerät einmal schreibt

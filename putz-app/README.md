@@ -10,12 +10,17 @@ Team- und persönliche Level, verdeckte Überraschungen vom Partner. Kostenlos, 
 | Punkte pro Aufgabe | nach Schwierigkeit: 3 · 5 · 10 · 15 · 20 · 30 · 50 (in der App änderbar) |
 | Überfällig | Team verliert pro Tag 10 % der Aufgabenpunkte, höchstens 10 Tage lang |
 | Rettungsbonus | +50 % aufs persönliche Level für überfällige Aufgaben |
-| Zu früh erledigt | Punkte erst wieder nach der Hälfte des Intervalls |
+| Vor der Fälligkeit erledigt | Geht jederzeit, volle Punkte, die Uhr startet neu |
 | Persönliches Level | eigene Punkte ohne Abzüge; jeder Aufstieg = eine Karte aus dem Überraschungstopf des Partners |
 | Teamlevel | Summe minus Abzüge; einmal erreicht, bleibt es erreicht |
 | Teambelohnung einlösen | nur, wenn beide seit dem vorigen Teamlevel mindestens ein Drittel beigetragen haben |
 
-Regeln und Schwellen stehen in [js/game.js](js/game.js), die Aufgaben in [js/tasks.js](js/tasks.js).
+| Eigene Aufgaben | in den Einstellungen anlegen; eingebaute umbenennen, Intervall ändern oder ausblenden |
+| Neue oder wieder eingeblendete Aufgabe | startet halb frisch, ohne rückwirkende Abzüge |
+
+Regeln und Schwellen stehen in [js/game.js](js/game.js), die eingebauten Aufgaben in [js/tasks.js](js/tasks.js).
+Änderungen aus der App liegen als Items `task` in der Datenbank (bei eingebauten nur die Abweichungen,
+Punkte weiter in `settings.pointOverrides`).
 
 ## Einrichtung (einmalig, ca. 20 Minuten)
 
@@ -78,7 +83,7 @@ Nach Änderungen an Dateien die `VERSION` in [sw.js](sw.js) hochzählen, damit d
 | Datei | Inhalt |
 |---|---|
 | `index.html`, `styles.css` | Gerüst und Gestaltung (nur Dunkelmodus), Schrift Figtree und Icons Material Symbols von Google Fonts |
-| `js/tasks.js` | Aufgabenkatalog mit Bereich, Intervall und Punkten |
+| `js/tasks.js` | eingebauter Aufgabenkatalog mit Bereich, Intervall und Punkten; Alltagsaufgaben; gestrichene Aufgaben für den Verlauf |
 | `js/game.js` | Spielregeln: Frische, Abzüge, Level, Fairness; ohne DOM, mit Node testbar |
 | `js/store.js` | lokaler Speicher und Abgleich mit Supabase (eine Tabelle `items`) |
 | `js/app.js` | Oberfläche: Heute, Belohnungen, Statistik, Einstellungen |
@@ -89,6 +94,5 @@ Nach Änderungen an Dateien die `VERSION` in [sw.js](sw.js) hochzählen, damit d
 
 - Push-Erinnerungen, wenn etwas überfällig wird
 - Putztipps aus dem Putzplan direkt in der Aufgabe
-- Eigene Aufgaben anlegen
 - Abzeichen (Fenster-Held, Frühaufsteher, Rettung in letzter Sekunde)
 - Wochenziel mit Serie

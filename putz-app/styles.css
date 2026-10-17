@@ -237,8 +237,15 @@ h1, h2, h3, p { margin: 0; }
 .kpis b { font-size: 22px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .kpis span { font-size: 12px; font-weight: 500; color: var(--muted); line-height: 1.25; overflow-wrap: anywhere; }
 
-.daily-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/* Eine Reihe zum Wischen: randlos bis an den Bildschirmrand, die letzte sichtbare Kachel ist angeschnitten. */
+.daily-row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 28%; gap: 10px;
+  margin: 0 -18px; padding: 0 18px; scroll-padding: 0 18px;
+  overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.daily-row::-webkit-scrollbar { display: none; }
 .daily {
+  scroll-snap-align: start;
   background: var(--surface); border-radius: 24px; padding: 16px 8px 14px;
   display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
   transition: transform .1s, opacity .2s;
@@ -247,7 +254,7 @@ h1, h2, h3, p { margin: 0; }
 .daily:disabled { opacity: .5; }
 .daily .circle { width: 50px; height: 50px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
 .daily .circle .ms { font-size: 26px; }
-.daily .name { font-size: 13px; font-weight: 700; line-height: 1.2; hyphens: auto; text-wrap: pretty; }
+.daily .name { font-size: 13px; font-weight: 700; line-height: 1.2; hyphens: manual; text-wrap: pretty; }
 .daily .meta { display: flex; gap: 5px; align-items: center; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: auto; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
 .dot.on { background: var(--accent); }
@@ -534,6 +541,11 @@ h1, h2, h3, p { margin: 0; }
 .pt-row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .pt-row .grow b { font-size: 14px; font-weight: 600; line-height: 1.25; overflow-wrap: break-word; }
 .pt-row .grow span { font-size: 12px; color: var(--muted); }
+.pt-row > button.grow { text-align: left; padding: 2px 0; }
+.pt-row.off .grow { opacity: .5; }
+.pt-show { width: 44px; height: 44px; border-radius: 22px; display: grid; place-items: center; color: var(--muted); flex: none; }
+.pt-add { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; border-top: 1px solid var(--line); color: var(--accent); font-size: 14px; font-weight: 700; }
+.pt-add .ms { font-size: 20px; }
 .stepper { display: flex; align-items: center; gap: 2px; flex: none; background: var(--surface-2); border-radius: 22px; padding: 2px; }
 .stepper button { width: 40px; height: 40px; border-radius: 20px; color: var(--text); display: grid; place-items: center; }
 .stepper button:disabled { color: var(--muted-2); opacity: .5; }
@@ -581,6 +593,9 @@ h1, h2, h3, p { margin: 0; }
 .modal .field { width: 100%; flex: none; margin: 6px 0; }
 .modal .pill { width: 100%; }
 .modal .pill.big { margin-top: 8px; }
+.modal .sheet-area { align-self: flex-start; }
+.modal .task-iv { width: 100%; grid-auto-flow: row; grid-template-columns: 1fr 1fr; background: var(--surface-2); border-radius: 24px; }
+.task-pts { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
 
 @keyframes fade { from { opacity: 0; } }
 @keyframes up { from { transform: translateY(40px); opacity: 0; } }
