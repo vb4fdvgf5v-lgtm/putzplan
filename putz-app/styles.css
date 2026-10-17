@@ -379,7 +379,7 @@ h1, h2, h3, p { margin: 0; }
 .add-row { display: flex; gap: 8px; }
 .field {
   flex: 1; min-width: 0; height: 50px; border-radius: 25px; border: none; background: var(--surface-2);
-  color: var(--text); padding: 0 18px; font-size: 15px; font-weight: 500; outline: none;
+  color: var(--text); padding: 0 18px; font-size: 16px; font-weight: 500; outline: none; /* unter 16 px zoomt iOS beim Tippen */
 }
 .field:focus { box-shadow: 0 0 0 2px var(--accent) inset; }
 .round-add { width: 50px; height: 50px; flex: none; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; transition: opacity .2s; }
@@ -520,7 +520,7 @@ h1, h2, h3, p { margin: 0; }
 .join-toggle > .ms:first-child { color: var(--muted); font-size: 20px; }
 .join-toggle span:nth-child(2) { flex: 1; }
 .join-row { display: flex; gap: 8px; margin-top: -6px; }
-.join-row .field { height: 48px; border-radius: 24px; font-weight: 700; font-size: 15px; letter-spacing: .06em; text-transform: uppercase; }
+.join-row .field { height: 48px; border-radius: 24px; font-weight: 700; font-size: 16px; letter-spacing: .06em; text-transform: uppercase; }
 .join-row .pill { height: 48px; border-radius: 24px; }
 
 .lcard { padding: 4px 16px; }
@@ -591,6 +591,12 @@ h1, h2, h3, p { margin: 0; }
 .modal .field { width: 100%; flex: none; margin: 6px 0; }
 .modal .pill { width: 100%; }
 .modal .pill.big { margin-top: 8px; }
+/* Fenster mit Eingabefeld oben verankern: die Tastatur schiebt sie dann nicht durch die Gegend. */
+.modal.form {
+  top: calc(env(safe-area-inset-top) + 12px); transform: translateX(-50%);
+  max-height: calc(100dvh - env(safe-area-inset-top) - 24px); overflow-y: auto; overscroll-behavior: contain;
+  animation: pop-top .25s ease-out;
+}
 .modal .sheet-area { align-self: flex-start; }
 .area-pick { width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .area-pick button { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 2px; border-radius: 16px; font-size: 11px; font-weight: 600; color: var(--muted); }
@@ -602,6 +608,7 @@ h1, h2, h3, p { margin: 0; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes up { from { transform: translateY(40px); opacity: 0; } }
 @keyframes pop { from { transform: translate(-50%, -46%) scale(.96); opacity: 0; } }
+@keyframes pop-top { from { transform: translate(-50%, 12px) scale(.96); opacity: 0; } }
 
 /* ---------- Einrichtung ---------- */
 .setup { padding-bottom: calc(env(safe-area-inset-bottom) + 40px); gap: 18px; }

@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
@@ -747,7 +747,8 @@ function modalHtml(c) {
       ${t ? `<button class="pill ghost" data-action="toggleHideTask">${t.hidden ? 'Wieder einblenden' : 'Ausblenden'}</button>` : ''}
       <button class="pill ghost" data-action="closeModal">Abbrechen</button>`;
   }
-  return `<div class="backdrop" data-action="closeModal"></div><div class="modal" role="dialog" aria-modal="true">${body}</div>`;
+  const form = m.type === 'task' || m.type === 'reward' ? ' form' : '';
+  return `<div class="backdrop" data-action="closeModal"></div><div class="modal${form}" role="dialog" aria-modal="true">${body}</div>`;
 }
 
 function toastHtml() {
@@ -879,9 +880,12 @@ function render() {
   const views = { home: viewHome, rewards: viewRewards, stats: viewStats, settings: viewSettings };
   // Die Alltag-Reihe scrollt seitlich: Position über das Neuzeichnen retten.
   const dailyScroll = $app.querySelector('.daily-row')?.scrollLeft ?? 0;
+  const modalOpen = Boolean($app.querySelector('.modal'));
   $app.innerHTML = `<main class="view ${ui.view}">${views[ui.view](c)}</main>${dockHtml(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
   const row = $app.querySelector('.daily-row');
   if (row) row.scrollLeft = dailyScroll;
+  // Ein schon offenes Fenster nicht bei jeder Änderung neu einblenden.
+  if (modalOpen) $app.querySelectorAll('.modal, .backdrop').forEach(el => { el.style.animation = 'none'; });
 }
 
 // Während getippt wird oder eine Karte sich dreht, nicht neu zeichnen.
@@ -1124,7 +1128,6 @@ const actions = {
   newTask: d => {
     ui.modal = { type: 'task', id: null, area: ui.pointsArea ?? Object.keys(AREAS)[0], name: '', interval: 'W', points: 10 };
     render();
-    document.getElementById('task-name')?.focus();
   },
   editTask: d => {
     const t = taskById(d.id);
