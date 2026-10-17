@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.5';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
@@ -127,9 +127,18 @@ function dueMeta(s, now, paused) {
     const cost = paused ? ' · pausiert' : s.penaltyPerDay ? ` · −${fmtDec(s.penaltyPerDay)}/Tag` : '';
     return `<span class="od">${days}</span>${cost}`;
   }
-  const d = Math.ceil((s.due - now) / DAY);
+  const d = daysUntil(s.due, now);
   const fresh = now < s.freshUntil ? 'frisch · ' : '';
   return fresh + (d <= 0 ? 'heute fällig' : d === 1 ? 'morgen fällig' : `in ${d} Tagen fällig`);
+}
+
+// Kalendertage bis zur Fälligkeit (heute = 0), nicht angebrochene 24-Stunden-Blöcke.
+const daysUntil = (due, now) => Math.round((startOfDay(due) - startOfDay(now)) / DAY);
+// Hervorhebung der Zeile: farbiger Rand links und farbige Fälligkeitszeile.
+function dueClass(s, now) {
+  if (s.overdue) return 'due-od';
+  const d = daysUntil(s.due, now);
+  return d <= 0 ? 'due-today' : d === 1 ? 'due-tomorrow' : '';
 }
 
 const ptsButton = (t, s, cls = '') =>
@@ -139,7 +148,7 @@ const ptsButton = (t, s, cls = '') =>
 // Aufgabenzeile in der Bereichsliste und in den Suchtreffern: Name öffnet das Sheet, Pille erledigt direkt.
 const taskLine = (t, c) => {
   const s = c.state.status[t.id];
-  return `<div class="atask">
+  return `<div class="atask ${dueClass(s, c.now)}">
     <button class="tmain" data-action="open" data-id="${t.id}">
       <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(s, c.now, c.state.paused)}</span>
     </button>${ptsButton(t, s, 'sm')}</div>`;
@@ -223,7 +232,7 @@ function viewHome(c) {
     focusTitle = 'Als Nächstes';
     focusHint = 'nichts überfällig';
   }
-  const focusRow = t => `<div class="frow">${tile(t.area)}
+  const focusRow = t => `<div class="frow ${dueClass(st(t.id), now)}">${tile(t.area)}
       <button class="tmain" data-action="open" data-id="${t.id}">
         <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(st(t.id), now, state.paused)}</span>
       </button>${ptsButton(t, st(t.id))}</div>`;

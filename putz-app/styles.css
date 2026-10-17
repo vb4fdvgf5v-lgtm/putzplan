@@ -16,6 +16,10 @@
   --partner: #c3aeec;
   --on-partner: #181322;
   --overdue: #f19f94;
+  --today: #f2cf6b;          /* heute fällig */
+  --today-soft: #1e1d16;
+  --tomorrow: #d8c89a;       /* morgen fällig */
+  --tomorrow-line: #6b6248;
   --overdue-soft: #44241f;
   --vacation: #77cce6;
   --on-vacation: #061821;
@@ -271,8 +275,17 @@ h1, h2, h3, p { margin: 0; }
 .acc-head .line1 b { font-size: 16px; font-weight: 700; }
 .acc-head .line1 span { font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .acc-body { display: flex; flex-direction: column; padding: 0 16px 10px 72px; }
-.atask { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.atask { display: flex; align-items: center; gap: 10px; padding: 9px 0 9px 11px; border-top: 1px solid var(--line); }
 .atask .tname { font-weight: 600; }
+/* Fälligkeit: Rand links und Schriftfarbe der Fälligkeitszeile. Überfällig = rot, heute = gelb, morgen = gedämpft. */
+.frow.due-od { box-shadow: inset 3px 0 0 var(--overdue); }
+.frow.due-today { box-shadow: inset 3px 0 0 var(--today); background: var(--today-soft); }
+.frow.due-tomorrow { box-shadow: inset 3px 0 0 var(--tomorrow-line); }
+.atask.due-od { box-shadow: inset 3px 0 0 var(--overdue); }
+.atask.due-today { box-shadow: inset 3px 0 0 var(--today); }
+.atask.due-tomorrow { box-shadow: inset 3px 0 0 var(--tomorrow-line); }
+.due-today .tmeta { color: var(--today); }
+.due-tomorrow .tmeta { color: var(--tomorrow); }
 .area-list { overflow: hidden; scroll-margin-top: 16px; }
 .area-list > div { scroll-margin-top: 16px; }
 
