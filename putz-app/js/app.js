@@ -11,6 +11,7 @@ const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
 const APP_VERSION = '2.4.1';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
+const TODO_PREVIEW = 5; // so viele Aufgaben zeigt „Zu tun“, bevor „Alle anzeigen“ kommt
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
 // Überschrift der Übersichtskarte, grammatisch passend je Bereich
 const NEEDS = { kueche: 'Die Küche braucht', bad: 'Die Bäder brauchen', wohnen: 'Die Wohnräume brauchen',
@@ -21,6 +22,7 @@ const ui = {
   rewardsTab: 'me', editRewards: false, deck: null, flipped: null,
   statsView: 'over', statsRange: 'week', histWho: 'all',
   pointsArea: null, joinOpen: false, copied: false,
+  todoTab: null, todoAll: false, // null = erster Reiter, in dem etwas steht
   sheet: null, modal: null, toast: null, error: null,
 };
 let device = loadDevice();
@@ -216,14 +218,19 @@ function viewHome(c) {
     </button>`;
   };
 
-  let focus = focusTasks(c.tasks, state.status);
-  let focusTitle = 'Lohnt sich jetzt', focusHint = `Rettung +${pct(RULES.rescueBonus)} %`;
-  if (!focus.length) {
-    focus = c.tasks.filter(t => now >= st(t.id).freshUntil).sort((a, b) => st(a.id).due - st(b.id).due).slice(0, 3);
-    focusTitle = 'Als Nächstes';
-    focusHint = 'nichts überfällig';
-  }
-  const focusRow = t => `<div class="frow">${tile(t.area)}
+  // Zu tun: überfällig (teuerste zuerst), heute fällig, in den nächsten 7 Tagen fällig.
+  const endOfToday = startOfDay(now) + DAY;
+  const pending = c.tasks.filter(t => !st(t.id).overdue).sort((a, b) => st(a.id).due - st(b.id).due);
+  const todo = {
+    over: focusTasks(c.tasks, state.status, Infinity),
+    today: pending.filter(t => st(t.id).due < endOfToday),
+    week: pending.filter(t => st(t.id).due >= endOfToday && st(t.id).due < now + 7 * DAY),
+  };
+  const tab = ui.todoTab ?? Object.keys(todo).find(k => todo[k].length) ?? 'over';
+  const list = todo[tab];
+  const shown = ui.todoAll ? list : list.slice(0, TODO_PREVIEW);
+  const todoEmpty = { over: 'Nichts überfällig. Stark!', today: 'Heute ist nichts fällig.', week: 'Diese Woche wird nichts fällig.' };
+  const todoRow = t => `<div class="frow">${tile(t.area)}
       <button class="tmain" data-action="open" data-id="${t.id}">
         <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(st(t.id), now, state.paused)}</span>
       </button>${ptsButton(t, st(t.id))}</div>`;
@@ -265,7 +272,7 @@ function viewHome(c) {
       <div class="levels">${keys.map(segment).join('')}</div>
       <span class="hint">Je voller, desto frischer · antippen zum Öffnen</span>
       <div class="kpis">
-        <div><b class="od">${overdueTotal}</b><span>überfällig</span></div>
+        <button data-action="todoTab" data-val="over" data-scroll="1"><b class="od">${overdueTotal}</b><span>überfällig</span></button>
         <div><b>${state.penaltyPerDayNow ? `−${fmtDec(state.penaltyPerDayNow)}` : '0'}</b><span>Team pro Tag</span></div>
         <div><b style="color:var(--accent)">${fmtNum(ti.next - state.teamScore)}</b><span>bis ${esc(nextReward)}</span></div>
       </div>
@@ -276,9 +283,11 @@ function viewHome(c) {
       <div class="daily-row">${DAILY.map(dailyTile).join('')}</div>
     </section>
 
-    <section class="stack">
-      ${sec(focusTitle, hint(focusHint))}
-      <div class="stack-8">${focus.length ? focus.map(focusRow).join('') : '<p class="empty">Gerade ist alles frisch. Genießt es!</p>'}</div>
+    <section id="todo" class="stack">
+      ${sec('Zu tun', hint(tab === 'over' && list.length ? `Rettung +${pct(RULES.rescueBonus)} %` : ''))}
+      ${segmented([['over', 'Überfällig', todo.over.length], ['today', 'Heute', todo.today.length], ['week', 'Woche', todo.week.length]], tab, 'todoTab')}
+      <div class="stack-8">${list.length ? shown.map(todoRow).join('') : `<p class="empty">${todoEmpty[tab]}</p>`}
+        ${list.length > TODO_PREVIEW ? `<button class="more" data-action="todoAll">${ui.todoAll ? 'Weniger zeigen' : `Alle ${list.length} anzeigen`}${ms('expand_more', `chev outline${ui.todoAll ? ' up' : ''}`)}</button>` : ''}</div>
     </section>
 
     <section class="stack">
@@ -1104,6 +1113,13 @@ const actions = {
     if (confirm('Belohnung als eingelöst markieren?')) store.update(`reward-L${d.level}`, { redeemedAt: Date.now() });
   },
 
+  todoTab: d => {
+    ui.todoTab = d.val;
+    ui.todoAll = false;
+    render();
+    if (d.scroll) document.getElementById('todo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  todoAll: () => { ui.todoAll = !ui.todoAll; render(); },
   statsView: d => { ui.statsView = d.val; render(); },
   statsRange: d => { ui.statsRange = d.val; render(); },
   histWho: d => { ui.histWho = d.val; render(); },
