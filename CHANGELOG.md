@@ -2,6 +2,9 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.5 (17.10.)
+- Auf „Heute“ siehst du auf einen Blick, was dran ist: Überfälliges hat einen roten Rand, was heute fällig ist einen gelben, was morgen fällig ist einen blassgelben
+
 ## 2.4.1 (17.10.)
 - Die kleine Nachricht nach dem Abhaken flackert nicht mehr
 

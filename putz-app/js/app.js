@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.5';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const TODO_PREVIEW = 5; // so viele Aufgaben zeigt „Zu tun“, bevor „Alle anzeigen“ kommt
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
@@ -129,9 +129,18 @@ function dueMeta(s, now, paused) {
     const cost = paused ? ' · pausiert' : s.penaltyPerDay ? ` · −${fmtDec(s.penaltyPerDay)}/Tag` : '';
     return `<span class="od">${days}</span>${cost}`;
   }
-  const d = Math.ceil((s.due - now) / DAY);
+  const d = daysUntil(s.due, now);
   const fresh = now < s.freshUntil ? 'frisch · ' : '';
   return fresh + (d <= 0 ? 'heute fällig' : d === 1 ? 'morgen fällig' : `in ${d} Tagen fällig`);
+}
+
+// Kalendertage bis zur Fälligkeit (heute = 0), nicht angebrochene 24-Stunden-Blöcke.
+const daysUntil = (due, now) => Math.round((startOfDay(due) - startOfDay(now)) / DAY);
+// Hervorhebung der Zeile: farbiger Rand links und farbige Fälligkeitszeile.
+function dueClass(s, now) {
+  if (s.overdue) return 'due-od';
+  const d = daysUntil(s.due, now);
+  return d <= 0 ? 'due-today' : d === 1 ? 'due-tomorrow' : '';
 }
 
 const ptsButton = (t, s, cls = '') =>
@@ -141,7 +150,7 @@ const ptsButton = (t, s, cls = '') =>
 // Aufgabenzeile in der Bereichsliste und in den Suchtreffern: Name öffnet das Sheet, Pille erledigt direkt.
 const taskLine = (t, c) => {
   const s = c.state.status[t.id];
-  return `<div class="atask">
+  return `<div class="atask ${dueClass(s, c.now)}">
     <button class="tmain" data-action="open" data-id="${t.id}">
       <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(s, c.now, c.state.paused)}</span>
     </button>${ptsButton(t, s, 'sm')}</div>`;
@@ -218,19 +227,18 @@ function viewHome(c) {
     </button>`;
   };
 
-  // Zu tun: überfällig (teuerste zuerst), heute fällig, in den nächsten 7 Tagen fällig.
-  const endOfToday = startOfDay(now) + DAY;
+  // Zu tun: überfällig (teuerste zuerst), heute fällig, in den nächsten 7 Tagen fällig (Kalendertage).
   const pending = c.tasks.filter(t => !st(t.id).overdue).sort((a, b) => st(a.id).due - st(b.id).due);
   const todo = {
     over: focusTasks(c.tasks, state.status, Infinity),
-    today: pending.filter(t => st(t.id).due < endOfToday),
-    week: pending.filter(t => st(t.id).due >= endOfToday && st(t.id).due < now + 7 * DAY),
+    today: pending.filter(t => daysUntil(st(t.id).due, now) <= 0),
+    week: pending.filter(t => { const d = daysUntil(st(t.id).due, now); return d >= 1 && d <= 7; }),
   };
   const tab = ui.todoTab ?? Object.keys(todo).find(k => todo[k].length) ?? 'over';
   const list = todo[tab];
   const shown = ui.todoAll ? list : list.slice(0, TODO_PREVIEW);
   const todoEmpty = { over: 'Nichts überfällig. Stark!', today: 'Heute ist nichts fällig.', week: 'Diese Woche wird nichts fällig.' };
-  const todoRow = t => `<div class="frow">${tile(t.area)}
+  const todoRow = t => `<div class="frow ${dueClass(st(t.id), now)}">${tile(t.area)}
       <button class="tmain" data-action="open" data-id="${t.id}">
         <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(st(t.id), now, state.paused)}</span>
       </button>${ptsButton(t, st(t.id))}</div>`;
