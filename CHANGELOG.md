@@ -2,6 +2,10 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.6 (23.10.)
+- Neu auf „Heute“: „Zu tun“ mit den Reitern Überfällig, Heute und Woche. Dort siehst du alles, was ansteht, nicht nur drei Aufgaben
+- Die Zahlen oben in der Wohnungs-Karte lassen sich antippen: Überfällig führt zur Liste, Team pro Tag zur Statistik, die Belohnung zu den Team-Belohnungen
+
 ## 2.5 (17.10.)
 - Auf „Heute“ siehst du auf einen Blick, was dran ist: Überfälliges hat einen roten Rand, was heute fällig ist einen gelben, was morgen fällig ist einen blassgelben
 

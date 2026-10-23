@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.5';
+const APP_VERSION = '2.6';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const TODO_PREVIEW = 5; // so viele Aufgaben zeigt „Zu tun“, bevor „Alle anzeigen“ kommt
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
@@ -115,6 +115,11 @@ const avatar = (p, cls = '') => `<span class="avatar ${cls}" style="--pc:${pColo
 const avatars = c => `<div class="avatars">${avatar(c.me)}${avatar(c.partner)}</div>`;
 const tile = (area, size = '', icon = AREAS[area].icon) =>
   `<span class="tile ${size}" style="--ac:var(--area-${area})">${ms(icon)}</span>`;
+// Beschriftung mit Pfeil; das letzte Wort bleibt beim Umbruch beim Pfeil.
+const kpiLabel = text => {
+  const i = text.lastIndexOf(' ');
+  return `${esc(text.slice(0, i + 1))}<span class="nw">${esc(text.slice(i + 1))}${ms('chevron_right')}</span>`;
+};
 const sec = (title, hint = '') => `<div class="sec"><h3>${title}</h3>${hint}</div>`;
 const hint = text => `<span>${text}</span>`;
 const bar = (progress, color) =>
@@ -280,9 +285,9 @@ function viewHome(c) {
       <div class="levels">${keys.map(segment).join('')}</div>
       <span class="hint">Je voller, desto frischer · antippen zum Öffnen</span>
       <div class="kpis">
-        <button data-action="todoTab" data-val="over" data-scroll="1"><b class="od">${overdueTotal}</b><span>überfällig</span></button>
-        <div><b>${state.penaltyPerDayNow ? `−${fmtDec(state.penaltyPerDayNow)}` : '0'}</b><span>Team pro Tag</span></div>
-        <div><b style="color:var(--accent)">${fmtNum(ti.next - state.teamScore)}</b><span>bis ${esc(nextReward)}</span></div>
+        <button data-action="todoTab" data-val="over" data-scroll="1"><b class="od">${overdueTotal}</b><span>${kpiLabel('überfällig')}</span></button>
+        <button data-action="jump" data-view="stats" data-target="penalty"><b>${state.penaltyPerDayNow ? `−${fmtDec(state.penaltyPerDayNow)}` : '0'}</b><span>${kpiLabel('Team pro Tag')}</span></button>
+        <button data-action="jump" data-view="rewards" data-tab="team"><b style="color:var(--accent)">${fmtNum(ti.next - state.teamScore)}</b><span>${kpiLabel(`bis ${nextReward}`)}</span></button>
       </div>
     </section>
 
@@ -533,8 +538,8 @@ function viewStats(c) {
         <div class="card areasplit rows">${Object.keys(AREAS).map(areaRow).join('')}</div>
       </section>
       <div class="grid2">${order.map(levelCard).join('')}</div>
-      <section class="card penalty"><span class="tile od">${ms('hourglass_bottom')}</span>
-        <span class="grow"><b>Liegengeblieben</b><span>Teampunkte durch überfällige Aufgaben, seit Start</span></span>
+      <section id="penalty" class="card penalty"><span class="tile od">${ms('hourglass_bottom')}</span>
+        <span class="grow"><b>Liegengeblieben</b><span>Teampunkte durch überfällige Aufgaben, seit Start${state.penaltyPerDayNow ? ` · gerade −${fmtDec(state.penaltyPerDayNow)} pro Tag` : ''}</span></span>
         <b>${state.penaltyTotal ? `−${fmtNum(state.penaltyTotal)}` : '0'}</b></section>
       <section class="stack">
         ${sec('Am häufigsten erledigt', hint(periodLabel))}
@@ -1126,6 +1131,16 @@ const actions = {
     ui.todoAll = false;
     render();
     if (d.scroll) document.getElementById('todo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  // Sprung aus der Übersichtskarte in eine andere Ansicht, optional zu einem Abschnitt.
+  jump: d => {
+    ui.view = d.view;
+    if (d.tab) ui.rewardsTab = d.tab;
+    if (d.view === 'stats') ui.statsView = 'over';
+    ui.sheet = null; ui.modal = null; ui.editRewards = false;
+    render();
+    const target = d.target && document.getElementById(d.target);
+    if (target) target.scrollIntoView({ block: 'center' }); else scrollTo(0, 0);
   },
   todoAll: () => { ui.todoAll = !ui.todoAll; render(); },
   statsView: d => { ui.statsView = d.val; render(); },
