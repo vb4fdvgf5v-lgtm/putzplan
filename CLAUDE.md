@@ -61,6 +61,8 @@ Gestrichenes löschen, Neues mit sauberer ID anlegen).
 - Aufgaben frei wählbar, nicht zugewiesen; Punkte nach Schwierigkeit, nicht nach Zeit
 - Minuspunkte nur fürs Team, persönliches Level ohne Aufholbonus
 - Überraschungskarten vom Partner, verdeckt aus bis zu 3 ziehen
+- Leerer Überraschungstopf (keine offene Karte von mir für den Partner) sperrt auf meinem Gerät nur das Abhaken,
+  nicht das Ansehen; eine Karte genügt (seit 2.7)
 - Urlaubsmodus pausiert die Uhr für den ganzen Haushalt
 - Alltag: tägliche Ein-Tipp-Aufgaben (Küche 3×, max. 2× pro Tag; Wäsche waschen max. 1× pro Tag), keine Fälligkeit
 - Design 2.0: nur Dunkelmodus (Hellmodus vorerst nicht), Personen als Initiale mit wählbarer Farbe statt Emoji

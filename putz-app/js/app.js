@@ -9,7 +9,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.7';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const TODO_PREVIEW = 5; // so viele Aufgaben zeigt „Zu tun“, bevor „Alle anzeigen“ kommt
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
@@ -95,12 +95,15 @@ function ctx() {
   catalog = buildCatalog(TASKS, store.list('task'));
   const tasks = catalog.active;
   const state = compute({ tasks, completions: store.list('completion'), settings, players, now });
+  const vouchers = store.list('voucher');
   return {
     settings, players, now, state, tasks, allTasks: catalog.all,
     me: players.find(p => p.id === device.me),
     partner: players.find(p => p.id !== device.me),
     name: id => players.find(p => p.id === id),
-    vouchers: store.list('voucher'),
+    vouchers,
+    // Leerer Überraschungstopf für den Partner sperrt auf diesem Gerät das Abhaken.
+    potEmpty: !vouchers.some(v => v.from === device.me && !v.pickedAt),
     rewards: store.list('reward'),
   };
 }
@@ -160,6 +163,14 @@ const taskLine = (t, c) => {
       <span class="tname">${esc(t.name)}</span><span class="tmeta">${dueMeta(s, c.now, c.state.paused)}</span>
     </button>${ptsButton(t, s, 'sm')}</div>`;
 };
+
+function potBanner(c) {
+  if (!c.potEmpty) return '';
+  return `<div class="banner-pot"><span class="tile t40 partner">${ms('redeem')}</span>
+    <span class="grow"><b>Dein Topf für ${esc(c.partner.name)} ist leer</b>
+      <span>Leg eine Überraschung hinein, dann kannst du wieder abhaken.</span></span>
+    <button class="pill primary" data-action="jump" data-view="rewards" data-tab="partner" data-focus="voucher-text">Überraschung hinlegen</button></div>`;
+}
 
 function vacationBanner(c) {
   const pause = activePause(c.settings);
@@ -278,6 +289,8 @@ function viewHome(c) {
         ${bar(pi.progress)}
       </div>
     </header>
+
+    ${potBanner(c)}
 
     <section class="card overview">
       <div class="ov-top"><b>Wohnung</b><span>${behind} von ${keys.length} mit Rückstand</span></div>
@@ -415,6 +428,7 @@ function viewRewards(c) {
         <div class="pot-head"><h2>Für ${esc(partner.name)} in den Topf</h2>
           <span class="slots">${[0, 1, 2].map(i => `<i class="${i < n ? 'on' : ''}"></i>`).join('')}${n >= 3 ? `${n} im Topf` : `${n} von 3`}</span></div>
         <p class="tmeta" style="margin-top:-6px;line-height:1.4">${esc(partner.name)} zieht bei jedem Levelaufstieg eine von bis zu drei verdeckten Karten und sieht den Text erst dann. Drei oder mehr sind ideal.</p>
+        ${n ? '' : '<p class="tmeta od" style="margin-top:-6px;line-height:1.4">Solange der Topf leer ist, kannst du keine Aufgaben abhaken.</p>'}
         <div class="add-row">
           <input id="voucher-text" class="field" maxlength="200" enterkeyhint="done" placeholder="z. B. Ich koche dein Lieblingsessen" aria-label="Neuer Gutschein">
           <button class="round-add" data-action="addVoucher" disabled aria-label="In den Topf legen">${ms('add')}</button>
@@ -716,8 +730,9 @@ function sheetHtml(c) {
         ? '<p>Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
         : `<p class="od">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
       ${!st.overdue && st.count ? `<p class="note">Erst am ${fmtDate(st.due)} wieder fällig. Abhaken geht trotzdem.</p>` : ''}
-      <button class="pill primary big" data-action="complete" data-id="${t.id}" data-player="${c.me.id}">${ms('check')}Erledigt · +${xp}</button>
-      <button class="pill mid" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}">Von ${esc(c.partner.name)} erledigt eintragen</button>
+      ${c.potEmpty ? `<p class="note">Erst eine Überraschung für ${esc(c.partner.name)} in den Topf legen, dann kannst du abhaken.</p>` : ''}
+      <button class="pill primary big${c.potEmpty ? ' locked' : ''}" data-action="complete" data-id="${t.id}" data-player="${c.me.id}">${ms('check')}Erledigt · +${xp}</button>
+      <button class="pill mid${c.potEmpty ? ' locked' : ''}" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}">Von ${esc(c.partner.name)} erledigt eintragen</button>
     </div>`;
 }
 
@@ -904,7 +919,7 @@ function render() {
   // Die Alltag-Reihe scrollt seitlich: Position über das Neuzeichnen retten.
   const dailyScroll = $app.querySelector('.daily-row')?.scrollLeft ?? 0;
   const modalOpen = Boolean($app.querySelector('.modal'));
-  $app.innerHTML = `<main class="view ${ui.view}">${views[ui.view](c)}</main>${dockHtml(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
+  $app.innerHTML = `<main class="view ${ui.view}${c.potEmpty ? ' locked' : ''}">${views[ui.view](c)}</main>${dockHtml(c)}${sheetHtml(c)}${modalHtml(c)}${toastHtml()}`;
   const row = $app.querySelector('.daily-row');
   if (row) row.scrollLeft = dailyScroll;
   // Ein schon offenes Fenster nicht bei jeder Änderung neu einblenden.
@@ -971,12 +986,23 @@ function showToast(text, { sub = '', undo = null, ms: duration = 3800 } = {}) {
   toastTimer = setTimeout(() => { ui.toast = null; scheduleRender(); }, duration);
 }
 
+// Gibt true zurück und erklärt per Nachricht, wenn das Abhaken wegen leerem Topf gesperrt ist.
+function potLocked() {
+  const c = ctx();
+  if (!c.potEmpty) return false;
+  showToast(`Erst eine Überraschung für ${c.partner.name} in den Topf legen`, { sub: 'Belohnungen → Für ' + c.partner.name });
+  render();
+  return true;
+}
+
 function complete(taskId, playerId) {
+  if (potLocked()) return;
   const st = ctx().state.status[taskId];
   logCompletion({ taskId, player: playerId, at: Date.now(), points: st.points, rescue: st.overdue });
 }
 
 function completeDaily(taskId) {
+  if (potLocked()) return;
   const task = DAILY.find(t => t.id === taskId);
   if (dailyCountToday(ctx(), taskId) >= task.perDay) return;
   logCompletion({ taskId, player: device.me, at: Date.now(), points: task.points, rescue: false, daily: true }, { quiet: true });
@@ -1141,6 +1167,7 @@ const actions = {
     render();
     const target = d.target && document.getElementById(d.target);
     if (target) target.scrollIntoView({ block: 'center' }); else scrollTo(0, 0);
+    if (d.focus) document.getElementById(d.focus)?.focus();
   },
   todoAll: () => { ui.todoAll = !ui.todoAll; render(); },
   statsView: d => { ui.statsView = d.val; render(); },

@@ -2,6 +2,9 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.7 (23.10.)
+- Abhaken geht nur, wenn mindestens eine Überraschung von dir für den anderen im Topf liegt. Ist der Topf leer, zeigt „Heute“ oben einen Hinweis mit Knopf zum Hinlegen
+
 ## 2.6 (23.10.)
 - Neu auf „Heute“: „Zu tun“ mit den Reitern Überfällig, Heute und Woche. Dort siehst du alles, was ansteht, nicht nur drei Aufgaben
 - Die Zahlen oben in der Wohnungs-Karte lassen sich antippen: Überfällig führt zur Liste, Team pro Tag zur Statistik, die Belohnung zu den Team-Belohnungen
