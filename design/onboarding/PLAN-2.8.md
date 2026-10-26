@@ -64,11 +64,17 @@ fällig, alle Monatsaufgaben am 15. Tag.
 - **Bestehender Haushalt (Matthes) darf sich nicht ändern:** gleiche Aufgaben-IDs, gleicher Verlauf.
   Neue Haushalte bekommen die Einrichtung, der bestehende nicht.
 
-## Offene Punkte
+## Geklärt (26.10.2026, vor der Umsetzung)
 
-- Ohne Saugroboter fehlt „Böden saugen“ im Katalog → neue Aufgabe, nur wenn kein Roboter gewählt.
-- Flur hat im heutigen Katalog nur „Staubwischen“; im Prototyp aus Vorlage Aufräumen + Staubwischen.
-- Topf unter Belohnungen → „Für <Partner>“ an das Design aus Schritt 6 angleichen.
+- **Prototyp abgenommen, Umsetzung freigegeben.**
+- **Ohne Saugroboter:** zwei neue Aufgaben, nur wenn kein Roboter gewählt ist: „Böden saugen“ (wöchentlich,
+  15 Punkte) und „Böden wischen“ (alle 2 Wochen, 15 Punkte), Bereich Wohnräume.
+- **Topf unter Belohnungen bleibt wie heute.** Das Design mit drei Plätzen gibt es nur in der Einrichtung.
+- Flur aus Vorlage: Aufräumen + Staubwischen (keine Fenster-Aufgabe).
+- Euer bestehender Haushalt bleibt unverändert (keine Einrichtung, kein sanfter Start, gleiche Aufgaben).
+
+## Weitere Hinweise
+
 - Supabase Free reicht für einige Haushalte; das Projekt pausiert nur nach 7 Tagen ohne jede Nutzung.
 - Code ist der einzige Schlüssel (kein Konto): Support-Fälle „Code verloren“ sind nicht lösbar.
 - Mehr als 2 Personen (WGs) bewusst später, eher 3.0 (Fairnessregel, Topf „für den Partner“ usw.).
