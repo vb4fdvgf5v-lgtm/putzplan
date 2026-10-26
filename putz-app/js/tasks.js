@@ -115,3 +115,71 @@ export const RETIRED = [
   t('b-waesche-hell', 'bad', 'W', 10, 'Wäsche hell'),
   t('b-waesche-dunkel', 'bad', 'W', 10, 'Wäsche dunkel'),
 ];
+
+// ---------- Einrichtung neuer Haushalte (seit 2.8) ----------
+// Der bestehende Haushalt nutzt weiter TASKS. Neue Haushalte bekommen ihren Plan aus settings.setup:
+// { baths: 1–3, rooms: [Namen der Wohnräume], features: { robo, pflanzen, waschma, spuelma, mikro } }.
+
+export const FEATURES = [
+  { id: 'robo', icon: 'robot_2', area: 'robo', name: 'Saugroboter', hint: 'Roboter starten, Behälter, Bürsten …' },
+  { id: 'pflanzen', icon: 'potted_plant', area: 'pflanzen', name: 'Zimmerpflanzen', hint: 'Gießen, Pflege, Schädlinge' },
+  { id: 'waschma', icon: 'local_laundry_service', area: 'bad', name: 'Eigene Waschmaschine', hint: 'Wäsche waschen, Sieb und Gummi' },
+  { id: 'spuelma', icon: 'dishwasher_gen', area: 'kueche', name: 'Geschirrspüler', hint: 'Ausräumen, Sieb und Dichtungen' },
+  { id: 'mikro', icon: 'microwave', area: 'kueche', name: 'Mikrowelle', hint: 'Auswischen' },
+];
+// Wohnräume in dieser Reihenfolge, der Flur zählt mit. Später umbenennbar.
+export const ROOM_NAMES = ['Wohnzimmer', 'Schlafzimmer', 'Flur', 'Arbeitszimmer', 'Kinderzimmer', 'Gästezimmer', 'Zimmer 7', 'Zimmer 8'];
+export const MAX_BATHS = 3;
+
+// Wann eine Aufgabe aus TASKS in den Plan kommt: f:<Ausstattung>, bath2 (ab 2 Bädern, ab 3 auch als Bad 3),
+// room:<Index> (nur mit so vielen Wohnräumen), skip = wird aus Vorlagen je Raum erzeugt.
+const NEEDS = {
+  'k-mikrowelle': 'f:mikro', 'k-spuelmaschine': 'f:spuelma',
+  'b-waesche-heiss': 'f:waschma', 'b-waschmaschine': 'f:waschma',
+  'p-giessen': 'f:pflanzen', 'p-pflege': 'f:pflanzen', 'p-schaedlinge': 'f:pflanzen',
+  'r-starten': 'f:robo', 'r-behaelter': 'f:robo', 'r-buersten': 'f:robo', 'r-filter': 'f:robo', 'r-verschleiss': 'f:robo',
+  'b-wc-2': 'bath2', 'b-waschbecken-2': 'bath2', 'b-boden-2': 'bath2', 'b-spiegel-2': 'bath2', 'b-stoepsel-2': 'bath2',
+  'w-technik': 'room:3',
+  'w-aufraeumen-wohn': 'skip', 'w-aufraeumen-schlaf': 'skip', 'w-aufraeumen-arbeit': 'skip',
+  'w-staub-wohn': 'skip', 'w-staub-schlaf': 'skip', 'w-staub-arbeit': 'skip', 'w-staub-flur': 'skip',
+  'w-fenster-wohn': 'skip', 'w-fenster-schlaf': 'skip', 'w-fenster-arbeit': 'skip',
+};
+const DAILY_NEEDS = { 'a-spuelmaschine': 'spuelma', 'a-waesche': 'waschma' };
+// Ohne Saugroboter kommen Saugen und Wischen als eigene Aufgaben dazu.
+const NO_ROBOT = [
+  t('w-saugen', 'wohnen', 'W', 15, 'Böden saugen'),
+  t('w-wischen', 'wohnen', '2W', 15, 'Böden wischen'),
+];
+
+export const defaultSetup = () => ({
+  baths: 1,
+  rooms: ROOM_NAMES.slice(0, 4),
+  features: Object.fromEntries(FEATURES.map(f => [f.id, true])),
+});
+
+/** Aufgaben für eine Einrichtung. IDs der Räume hängen an der Position, nicht am Namen (umbenennbar). */
+export function planTasks(setup) {
+  const { baths, rooms, features } = setup;
+  const list = [];
+  for (const task of TASKS) {
+    const need = NEEDS[task.id] ?? '';
+    if (need === 'skip' || (need.startsWith('f:') && !features[need.slice(2)])) continue;
+    if (need === 'bath2' && baths < 2) continue;
+    if (need.startsWith('room:') && rooms.length <= Number(need.slice(5))) continue;
+    list.push(task.id === 'w-technik' ? { ...task, name: `${rooms[3]}: Technik entstauben` } : task);
+    if (need === 'bath2' && baths >= 3) {
+      list.push({ ...task, id: task.id.replace(/-2$/, '-3'), name: task.name.replace('Bad 2', 'Bad 3') });
+    }
+  }
+  if (!features.robo) list.push(...NO_ROBOT);
+  rooms.forEach((room, i) => {
+    const n = i + 1;
+    list.push(t(`w-raum${n}-auf`, 'wohnen', 'W', 5, `Aufräumen: ${room}`));
+    list.push(t(`w-raum${n}-staub`, 'wohnen', 'W', 5, `Staubwischen: ${room}`));
+    if (ROOM_NAMES[i] !== 'Flur') list.push(t(`w-raum${n}-fenster`, 'wohnen', 'Q', 20, `Fenster putzen: ${room}`));
+  });
+  return list;
+}
+
+/** Alltag passend zur Ausstattung. Ohne Einrichtung (bestehender Haushalt) alle. */
+export const dailyTasks = setup => (setup ? DAILY.filter(d => !DAILY_NEEDS[d.id] || setup.features[DAILY_NEEDS[d.id]]) : DAILY);

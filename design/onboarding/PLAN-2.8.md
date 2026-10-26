@@ -1,5 +1,7 @@
 # Plan 2.8: Einrichtung für neue Haushalte
 
+**Umgesetzt in Version 2.8 (26.10.2026).**
+
 Ziel: Freunde (zunächst nur **Paare**, genau 2 Personen) können über den normalen App-Link einen eigenen
 Haushalt anlegen und unabhängig nutzen. Technisch geht das schon heute: Ohne gespeicherten Haushalt
 zeigt die App „Neuen Haushalt anlegen“, jeder Haushalt hat einen eigenen 20-stelligen Code, und Supabase

@@ -17,6 +17,11 @@ Team- und persönliche Level, verdeckte Überraschungen vom Partner. Kostenlos, 
 
 | Eigene Aufgaben | in den Einstellungen anlegen; eingebaute umbenennen, Intervall ändern oder ausblenden |
 | Neue oder wieder eingeblendete Aufgabe | startet halb frisch, ohne rückwirkende Abzüge |
+| Sanfter Start (neue Haushalte, wählbar) | erste Fälligkeit verteilt (Wochenaufgaben über Tag 2–7 usw.), 14 Tage keine Abzüge; danach zählen die Abzugstage ab Ende der Eingewöhnung |
+
+Neue Haushalte (seit 2.8) bekommen ihren Plan aus der Einrichtung (`settings.setup`: Bäder, Wohnräume, Ausstattung),
+erzeugt von `planTasks` in [js/tasks.js](js/tasks.js). Haushalte ohne `settings.setup` nutzen unverändert `TASKS`.
+Sanfter Start: `settings.firstDue` (Tage bis zur ersten Fälligkeit je Aufgabe) und `settings.graceUntil`.
 
 Regeln und Schwellen stehen in [js/game.js](js/game.js), die eingebauten Aufgaben in [js/tasks.js](js/tasks.js).
 Änderungen aus der App liegen als Items `task` in der Datenbank (bei eingebauten nur die Abweichungen,
@@ -51,9 +56,10 @@ Alternative ohne Git: [Netlify Drop](https://app.netlify.com/drop), den Ordner i
 
 ### 3. Auf beide iPhones
 
-1. **Dein iPhone:** die Adresse in Safari öffnen → Haushalt anlegen → **Teilen → Zum Home-Bildschirm**.
-2. In der App unter **Einstellungen → Partner einladen → Link teilen** den Link an deine Freundin schicken.
-3. **Ihr iPhone:** Link in Safari öffnen → **Beitreten** → **Teilen → Zum Home-Bildschirm**.
+1. **Dein iPhone:** die Adresse in Safari öffnen → **Haushalt anlegen** (Einrichtung mit 6 Schritten) →
+   **Teilen → Zum Home-Bildschirm**.
+2. Im letzten Schritt der Einrichtung (oder später unter **Einstellungen → Link teilen**) den Link an den Partner schicken.
+3. **Sein iPhone:** Link in Safari öffnen → **Mitmachen** → **Teilen → Zum Home-Bildschirm**.
    Fragt die installierte App erneut nach dem Haushalt: unter „Haushalt beitreten“ den Code einfügen
    (Einstellungen → Code kopieren). Safari und Home-Bildschirm-App haben auf dem iPhone getrennten Speicher.
 

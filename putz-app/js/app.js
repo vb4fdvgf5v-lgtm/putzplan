@@ -1,6 +1,7 @@
-import { TASKS, DAILY, RETIRED, AREAS, INTERVALS } from './tasks.js';
+import { TASKS, DAILY, RETIRED, AREAS, INTERVALS, FEATURES, ROOM_NAMES, MAX_BATHS, planTasks, dailyTasks, defaultSetup } from './tasks.js';
 import { compute, buildCatalog, rewardFairness, picksAvailable, personalTitle, xpOf, threshold, activePause, taskPoints,
-  areaSummary, focusTasks, pointsByArea, weekStart, monthStart, DAY, RULES, TEAM } from './game.js';
+  areaSummary, focusTasks, pointsByArea, weekStart, monthStart, staggerFirstDue, firstDueByDay, graceLeft,
+  DAY, RULES, TEAM } from './game.js';
 import { createStore, cloudEnabled } from './store.js';
 
 const $app = document.getElementById('app');
@@ -9,7 +10,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const CLOUD = cloudEnabled && !DEMO;
 const DEVICE_KEY = DEMO ? 'putz:demo:device' : 'putz:device';
 // Bei jeder Veröffentlichung hochzählen und in CHANGELOG.md eintragen.
-const APP_VERSION = '2.7';
+const APP_VERSION = '2.8';
 const DEFAULT_REWARDS = { 2: 'Pizzaabend', 3: 'Kinoabend', 4: 'Essen gehen', 5: 'Wochenendausflug' };
 const TODO_PREVIEW = 5; // so viele Aufgaben zeigt „Zu tun“, bevor „Alle anzeigen“ kommt
 const POINT_STEPS = [3, 5, 10, 15, 20, 30, 35, 50, 60];
@@ -24,6 +25,7 @@ const ui = {
   pointsArea: null, joinOpen: false, copied: false,
   todoTab: null, todoAll: false, // null = erster Reiter, in dem etwas steht
   sheet: null, modal: null, toast: null, error: null,
+  wiz: null, // Einrichtung: Haushalt anlegen, Code eingeben oder beitreten
 };
 let device = loadDevice();
 let store = null;
@@ -51,6 +53,8 @@ const pct = x => Math.round(x * 100);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
 // Aktueller Katalog inkl. eigener und ausgeblendeter Aufgaben, bei jedem ctx() neu aufgebaut.
+// Neue Haushalte (seit 2.8) haben settings.setup und bekommen ihren Plan daraus, der bestehende nutzt TASKS.
+const baseTasks = settings => (settings?.setup ? planTasks(settings.setup) : TASKS);
 let catalog = buildCatalog(TASKS);
 const taskById = id => [catalog.all, DAILY, RETIRED].flat().find(t => t.id === id);
 const areaOf = id => taskById(id)?.area;
@@ -92,12 +96,15 @@ function ctx() {
   const settings = store.get('settings');
   const players = settings.players;
   const now = Date.now();
-  catalog = buildCatalog(TASKS, store.list('task'));
+  catalog = buildCatalog(baseTasks(settings), store.list('task'));
   const tasks = catalog.active;
   const state = compute({ tasks, completions: store.list('completion'), settings, players, now });
   const vouchers = store.list('voucher');
   return {
     settings, players, now, state, tasks, allTasks: catalog.all,
+    daily: dailyTasks(settings.setup),
+    // Bereiche, in denen es Aufgaben gibt (ohne Saugroboter z. B. kein Roboter)
+    areaKeys: Object.keys(AREAS).filter(k => catalog.all.some(t => t.area === k)),
     me: players.find(p => p.id === device.me),
     partner: players.find(p => p.id !== device.me),
     name: id => players.find(p => p.id === id),
@@ -172,6 +179,16 @@ function potBanner(c) {
     <button class="pill primary" data-action="jump" data-view="rewards" data-tab="partner" data-focus="voucher-text">Überraschung hinlegen</button></div>`;
 }
 
+function graceBanner(c) {
+  const left = graceLeft(c.settings, c.now);
+  if (!left || c.state.paused) return '';
+  const total = Math.round((c.settings.graceUntil - c.settings.startedAt) / DAY);
+  return `<div class="banner-grace"><span class="tile t40 soft">${ms('spa')}</span>
+    <span class="grow"><b>Eingewöhnung · noch ${plural(left, 'Tag', 'Tage')}</b>
+      <span>Keine Minuspunkte, Aufgaben werden nach und nach fällig. Punkte sammelt ihr ab sofort.</span>
+      ${bar(1 - left / total)}</span></div>`;
+}
+
 function vacationBanner(c) {
   const pause = activePause(c.settings);
   if (!pause) return '';
@@ -212,7 +229,7 @@ function viewHome(c) {
   const st = id => state.status[id];
   const pi = state.personal[me.id];
   const areas = areaSummary(c.tasks, state.status);
-  const keys = Object.keys(AREAS);
+  const keys = c.areaKeys.filter(k => areas[k]);
   const totalWeight = keys.reduce((s, k) => s + areas[k].weight, 0);
   const behind = keys.filter(k => areas[k].overdue).length;
   const overdueTotal = c.tasks.filter(t => st(t.id).overdue).length;
@@ -291,6 +308,7 @@ function viewHome(c) {
     </header>
 
     ${potBanner(c)}
+    ${graceBanner(c)}
 
     <section class="card overview">
       <div class="ov-top"><b>Wohnung</b><span>${behind} von ${keys.length} mit Rückstand</span></div>
@@ -306,7 +324,7 @@ function viewHome(c) {
 
     <section class="stack">
       ${sec('Alltag', hint('ein Tipp genügt'))}
-      <div class="daily-row">${DAILY.map(dailyTile).join('')}</div>
+      <div class="daily-row">${c.daily.map(dailyTile).join('')}</div>
     </section>
 
     <section id="todo" class="stack">
@@ -314,6 +332,7 @@ function viewHome(c) {
       ${segmented([['over', 'Überfällig', todo.over.length], ['today', 'Heute', todo.today.length], ['week', 'Woche', todo.week.length]], tab, 'todoTab')}
       <div class="stack-8">${list.length ? shown.map(todoRow).join('') : `<p class="empty">${todoEmpty[tab]}</p>`}
         ${list.length > TODO_PREVIEW ? `<button class="more" data-action="todoAll">${ui.todoAll ? 'Weniger zeigen' : `Alle ${list.length} anzeigen`}${ms('expand_more', `chev outline${ui.todoAll ? ' up' : ''}`)}</button>` : ''}</div>
+      ${state.grace ? `<div class="note-tip">${ms('lightbulb')}<span><b>Eine Aufgabe passt nicht zu euch?</b> Einfach antippen und ausblenden. In den ersten Tagen merkt ihr am besten, was ihr wirklich braucht.</span></div>` : ''}
     </section>
 
     <section class="stack">
@@ -549,7 +568,7 @@ function viewStats(c) {
       </section>
       <section class="stack">
         ${sec('Wer macht was?', hint(periodLabel))}
-        <div class="card areasplit rows">${Object.keys(AREAS).map(areaRow).join('')}</div>
+        <div class="card areasplit rows">${c.areaKeys.map(areaRow).join('')}</div>
       </section>
       <div class="grid2">${order.map(levelCard).join('')}</div>
       <section id="penalty" class="card penalty"><span class="tile od">${ms('hourglass_bottom')}</span>
@@ -668,6 +687,14 @@ function viewSettings(c) {
     </div>`;
   };
 
+  // Räume aus der Einrichtung umbenennen; die Aufgaben heißen dann mit.
+  const rooms = settings.setup ? `<section class="stack">
+      ${sec('Räume', hint('antippen zum Umbenennen'))}
+      <div class="card lcard rows">${settings.setup.rooms.map((r, i) => `<label class="room-row">${tile('wohnen', 't38')}
+        <input class="room-in" value="${esc(r)}" maxlength="24" data-change="roomName" data-i="${i}" aria-label="Name von Raum ${i + 1}"></label>`).join('')}</div>
+    </section>` : '';
+  const grace = graceLeft(settings, c.now);
+
   const rule = (icon, cls, title, text) => `<div class="lrow"><span class="tile t40 ${cls}">${ms(icon)}</span>
     <span class="grow"><b>${title}</b><span>${text}</span></span></div>`;
 
@@ -691,13 +718,15 @@ function viewSettings(c) {
 
     <section class="stack">
       ${sec('Aufgaben', hint('antippen zum Bearbeiten'))}
-      <div class="card rows" style="overflow:hidden">${Object.keys(AREAS).map(areaBlock).join('')}</div>
+      <div class="card rows" style="overflow:hidden">${c.areaKeys.map(areaBlock).join('')}</div>
       <button class="pill mid" data-action="newTask">${ms('add')}Aufgabe hinzufügen</button>
     </section>
+    ${rooms}
 
     <section class="stack">
       ${sec('So funktioniert’s')}
       <div class="card lcard rows">
+        ${grace ? rule('spa', 'soft', 'Eingewöhnung', `Bis ${fmtDate(settings.graceUntil)} keine Minuspunkte. Überfälliges kostet erst danach.`) : ''}
         ${rule('hourglass_bottom', 'od', 'Liegenlassen kostet', `Überfällige Aufgaben kosten das Team pro Tag ${pct(RULES.penaltyRate)} % ihrer Punkte, höchstens ${RULES.penaltyCapDays} Tage lang.`)}
         ${rule('volunteer_activism', 'soft', 'Retten lohnt sich', `Wer eine überfällige Aufgabe erledigt, bekommt +${pct(RULES.rescueBonus)} % aufs persönliche Level.`)}
         ${rule('schedule', 'info', 'Jederzeit erledigen', 'Aufgaben lassen sich auch vor der Fälligkeit abhaken. Ihre Uhr startet dann neu.')}
@@ -728,11 +757,13 @@ function sheetHtml(c) {
       <p>${last}</p>
       ${st.overdue ? (c.state.paused
         ? '<p>Überfällig, aber im Urlaubsmodus pausiert. Kostet gerade nichts.</p>'
+        : c.state.grace ? '<p>Überfällig, aber in der Eingewöhnung kostet das noch nichts.</p>'
         : `<p class="od">Überfällig. Kostet das Team gerade −${fmtDec(st.penaltyPerDay)} Punkte pro Tag.</p>`) : ''}
       ${!st.overdue && st.count ? `<p class="note">Erst am ${fmtDate(st.due)} wieder fällig. Abhaken geht trotzdem.</p>` : ''}
       ${c.potEmpty ? `<p class="note">Erst eine Überraschung für ${esc(c.partner.name)} in den Topf legen, dann kannst du abhaken.</p>` : ''}
       <button class="pill primary big${c.potEmpty ? ' locked' : ''}" data-action="complete" data-id="${t.id}" data-player="${c.me.id}">${ms('check')}Erledigt · +${xp}</button>
       <button class="pill mid${c.potEmpty ? ' locked' : ''}" data-action="complete" data-id="${t.id}" data-player="${c.partner.id}">Von ${esc(c.partner.name)} erledigt eintragen</button>
+      ${c.state.grace ? `<button class="pill ghost" data-action="hideFromSheet" data-id="${t.id}">${ms('visibility_off')}Passt nicht zu uns · ausblenden</button>` : ''}
     </div>`;
 }
 
@@ -797,57 +828,342 @@ function toastHtml() {
 }
 
 // ---------- Einrichtung ----------
+// Assistent in ui.wiz: „create“ legt einen Haushalt an, „code“ tritt per Code bei, „join“ führt nach dem Beitreten
+// durch Willkommen, „Wer bist du?“ und den Überraschungstopf. Neu gezeichnet wie alles andere über render().
 
-function renderSetup() {
-  const joinCode = joinParam();
-  $app.innerHTML = `<main class="setup">
-    <div class="logo">${ms('cleaning_services')}</div>
-    <h1>Putzplan</h1>
-    <p>Euer gemeinsamer Putzplan mit Punkten, Leveln und Überraschungen.</p>
-    ${ui.error ? `<p class="err">${esc(ui.error)}</p>` : ''}
-    ${CLOUD ? `<section class="card">
-      <h3>Haushalt beitreten</h3>
-      <p>Dein Partner hat den Haushalt schon angelegt? Link öffnen oder Code einfügen.</p>
-      <input id="join-code" class="field" value="${esc(joinCode)}" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
-      <button class="pill big ${joinCode ? 'primary' : ''}" data-action="join">Beitreten</button>
-      <p>Tipp: Öffnet die App vom Home-Bildschirm den Link nicht, den Code hier einfügen.</p>
-    </section>` : ''}
-    <section class="card">
-      <h3>Neuen Haushalt anlegen</h3>
-      <input id="n1" class="field" placeholder="Dein Name" maxlength="24" autocomplete="given-name">
-      <input id="n2" class="field" placeholder="Name deines Partners" maxlength="24">
-      <button class="pill big ${joinCode ? '' : 'primary'}" data-action="create">Los geht’s</button>
-    </section>
+const IDEAS = ['Frühstück ans Bett', 'Eine Massage, so lange du willst 😉', 'Du suchst den Film aus',
+  'Ein Abend ganz für uns zwei 😉', 'Ich übernehme deine nächste Aufgabe'];
+
+function newWizard(flow) {
+  const settings = flow === 'join' ? store.get('settings') : null;
+  // Wer beitritt, ist meist die Person, die noch auf keinem Gerät war.
+  const me = settings?.players.find(p => !store.get(`presence-${p.id}`))?.id ?? 'b';
+  return { flow, step: 0, me, names: ['', ''], colors: [0, 1], ...defaultSetup(), roomCount: 4,
+    off: [], openArea: null, start: 'soft', cards: [], draft: '', writeMore: false };
+}
+
+function wizSteps(w) {
+  if (w.flow === 'create') return ['welcome', 'names', 'home', 'plan', 'start', 'voucher', 'invite'];
+  if (w.flow === 'code') return ['code'];
+  return store.get('settings').setup ? ['joinWelcome', 'joinWho', 'joinVoucher'] : ['joinWho', 'joinVoucher'];
+}
+
+const wizSetup = w => ({ baths: w.baths, rooms: ROOM_NAMES.slice(0, w.roomCount), features: { ...w.features } });
+const wizPlan = w => planTasks(wizSetup(w));
+const wizNames = w => w.names.map((n, i) => n.trim() || ['Alex', 'Sam'][i]);
+
+function wizChart(w) {
+  const on = wizPlan(w).filter(t => !w.off.includes(t.id));
+  const soft = firstDueByDay(on, staggerFirstDue(on)), now = firstDueByDay(on, null);
+  const d = w.start === 'soft' ? soft : now, max = Math.max(...soft, ...now);
+  const peak = d.indexOf(Math.max(...d));
+  return `<div class="chart">
+    <div class="bars">${d.map(n => `<i class="${n > 10 ? 'hot' : ''}" style="height:${Math.max(3, n / max * 100)}%">${n > 10 ? `<em>${n}</em>` : ''}</i>`).join('')}</div>
+    <div class="axis">${d.map((_, i) => `<span>${i + 1}</span>`).join('')}</div>
+    <div class="cap"><span>Erstmals fällig, Tag 1–14</span><span>${w.start === 'soft' ? `höchstens ${d[peak]} am Tag` : `Tag ${peak + 1}: ${d[peak]} auf einmal`}</span></div>
+  </div>`;
+}
+
+// Überraschungstopf: drei Plätze, der nächste freie ist selbst das Eingabefeld. Eine Karte reicht zum Weitermachen.
+function wizPot(w, forName, lead) {
+  const n = w.cards.length;
+  const slot = i => w.cards[i]
+    ? `<div class="slot full${i === w.fresh ? ' new' : ''}"><span class="num">${i + 1}</span><span class="txt">${esc(w.cards[i])}</span>
+        <button class="icon-btn" data-action="wizRemoveCard" data-i="${i}" aria-label="Entfernen">${ms('close')}</button></div>`
+    : i === n
+      ? `<div class="slot write"><span class="num">${i + 1}</span>
+          <input id="wiz-card" value="${esc(w.draft)}" placeholder="Schreib hier deine Idee …" maxlength="200" enterkeyhint="done" aria-label="Neue Überraschung">
+          <button class="round-add" data-action="wizAddCard" ${w.draft.trim() ? '' : 'disabled'} aria-label="In den Topf">${ms('add')}</button></div>`
+      : `<div class="slot"><span class="num">${i + 1}</span><span class="txt">Noch frei</span></div>`;
+  const ideas = IDEAS.filter(t => !w.cards.includes(t)).slice(0, 3);
+  return `
+    <div class="hero partner"><div class="big-icon">${ms('redeem')}</div>
+      <h1>Drei Überraschungen für ${esc(forName)}</h1><p class="lead">${lead}</p></div>
+    <div class="pot">
+      <div class="pot-top"><b>Dein Topf für ${esc(forName)}</b><span class="${n >= 3 ? 'ok' : ''}">${Math.min(n, 3)} von 3${n > 3 ? ` · ${n} drin` : ''}</span></div>
+      <div class="pips">${[0, 1, 2].map(i => `<i class="${i < n ? 'on' : ''}"></i>`).join('')}</div>
+      ${Array.from({ length: Math.max(3, n + (w.writeMore ? 1 : 0)) }, (_, i) => slot(i)).join('')}
+      ${n >= 3 && !w.writeMore ? `<button class="more-card" data-action="wizMoreCard">${ms('add')}Noch eine Karte</button>` : ''}
+    </div>
+    ${ideas.length && n < 3 ? `<div class="ideas"><span>Keine Idee? Antippen zum Übernehmen</span>${ideas.map(t =>
+      `<button class="chip" data-action="wizIdea" data-val="${esc(t)}">${ms('add')}${esc(t)}</button>`).join('')}</div>` : ''}
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext" ${n ? '' : 'disabled'}>${n >= 3 ? `Fertig, ${n} Karten im Topf`
+      : n ? `Weiter mit ${n === 1 ? 'einer Karte' : `${n} Karten`}` : 'Mindestens eine Karte hinlegen'}</button>
+      ${n && n < 3 ? `<p class="fine">Noch ${3 - n} für eine echte Auswahl. Du kannst später jederzeit nachlegen.</p>` : ''}</div>`;
+}
+
+const wizScreens = {
+  welcome: () => `
+    <div class="hero"><div class="big-icon">${ms('cleaning_services')}</div>
+      <h1>Euer Putzplan zu zweit</h1>
+      <p class="lead">Aufgaben abhaken, Punkte sammeln, gemeinsam Level aufsteigen. Und bei jedem Aufstieg zieht ihr eine Überraschung, die der andere für euch hinterlegt hat.</p></div>
+    <div class="card pad list">
+      <div class="bullet">${ms('timer')}<span><b>Dauert 2 Minuten.</b> Namen, eure Wohnung, eine erste Überraschung.</span></div>
+      <div class="bullet">${ms('spa')}<span><b>Sanfter Start.</b> Die ersten zwei Wochen sind zum Reinkommen, ohne Minuspunkte.</span></div>
+      <div class="bullet">${ms('lock')}<span><b>Nur für euch.</b> Kein Konto, keine E-Mail. Euer Haushalt hat einen eigenen Schlüssel.</span></div>
+    </div>
     ${CLOUD || DEMO ? '' : '<p class="fine">Hinweis: Noch kein Supabase eingerichtet. Alles wird nur auf diesem Gerät gespeichert.</p>'}
-  </main>`;
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Haushalt anlegen</button>
+      ${CLOUD ? '<button class="pill ghost" data-action="wizFlow" data-val="code">Ich habe einen Einladungslink</button>' : ''}</div>`,
+
+  code: () => `
+    <div class="hero partner"><div class="big-icon">${ms('login')}</div><h1>Einem Haushalt beitreten</h1>
+      <p class="lead">Öffne den Link, den du bekommen hast, oder füge den Code hier ein.</p></div>
+    ${ui.error ? `<p class="err">${esc(ui.error)}</p>` : ''}
+    <input id="join-code" class="field code-in" value="${esc(joinParam())}" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="Haushaltscode">
+    <p class="fine">Tipp: Öffnet die App vom Home-Bildschirm den Link nicht, den Code hier einfügen.</p>
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="join">Beitreten</button></div>`,
+
+  names: w => `
+    <div class="hero"><h1>Wer putzt hier?</h1><p class="lead">Ihr seid zu zweit. Jeder bekommt eine Farbe, daran erkennt ihr später, wer was gemacht hat.</p></div>
+    ${[0, 1].map(i => `<div class="person">
+      <label class="lbl" for="wiz-n${i}">${i ? 'Dein Partner' : 'Du'}</label>
+      <input id="wiz-n${i}" class="field" data-wizname="${i}" value="${esc(w.names[i])}" placeholder="${i ? 'z. B. Sam' : 'z. B. Alex'}" maxlength="24" autocomplete="${i ? 'off' : 'given-name'}">
+      <div class="swatches">${[0, 1, 2, 3].map(c => `<button class="${w.colors[i] === c ? 'on' : ''}" style="background:var(--swatch-${c + 1})"
+        data-action="wizColor" data-i="${i}" data-val="${c}" aria-label="Farbe ${c + 1}"></button>`).join('')}</div>
+    </div>`).join('')}
+    <div class="spacer"></div>
+    <div class="foot"><button id="wiz-names-next" class="pill primary big" data-action="wizNext" ${w.names.every(n => n.trim()) ? '' : 'disabled'}>Weiter</button></div>`,
+
+  home: w => {
+    const count = wizPlan(w).filter(t => !w.off.includes(t.id)).length;
+    const stepper = (key, value, max) => `<span class="stepper">
+      <button data-action="wizCount" data-key="${key}" data-dir="-1" ${value <= 1 ? 'disabled' : ''} aria-label="weniger">${ms('remove')}</button><b>${value}</b>
+      <button data-action="wizCount" data-key="${key}" data-dir="1" ${value >= max ? 'disabled' : ''} aria-label="mehr">${ms('add')}</button></span>`;
+    return `
+    <div class="hero"><h1>Was habt ihr zu Hause?</h1><p class="lead">Danach wählen wir die passenden Aufgaben aus. Der Flur zählt als Wohnraum, die Küche ist immer dabei. Räume könnt ihr später umbenennen, und alles lässt sich in den Einstellungen ändern.</p></div>
+    <div class="sub">Räume</div>
+    <div class="card lcard rows">
+      <div class="lrow">${tile('bad', 't40')}<span class="grow"><b>Badezimmer</b><span>${w.baths === 1 ? 'ein Bad' : `${w.baths} Bäder`}, auch Gäste-WC</span></span>
+        ${stepper('baths', w.baths, MAX_BATHS)}</div>
+      <div class="lrow">${tile('wohnen', 't40')}<span class="grow"><b>Wohnräume</b><span>${ROOM_NAMES.slice(0, w.roomCount).join(', ')}</span></span>
+        ${stepper('roomCount', w.roomCount, ROOM_NAMES.length)}</div>
+    </div>
+    <div class="sub">Ausstattung</div>
+    <div class="card lcard rows">${FEATURES.map(f => `<div class="lrow">${tile(f.area, 't40', f.icon)}
+        <span class="grow"><b>${f.name}</b><span>${f.hint}</span></span>
+        <button class="switch${w.features[f.id] ? ' on' : ''}" data-action="wizFeature" data-val="${f.id}" role="switch" aria-checked="${w.features[f.id]}" aria-label="${f.name}"><span></span></button></div>`).join('')}</div>
+    <div class="count"><b>${count}</b><span>Aufgaben in eurem Plan</span></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Weiter</button></div>`;
+  },
+
+  plan: w => {
+    const tasks = wizPlan(w);
+    const on = tasks.filter(t => !w.off.includes(t.id));
+    const area = k => {
+      const all = tasks.filter(t => t.area === k);
+      if (!all.length) return '';
+      const sel = all.filter(t => !w.off.includes(t.id));
+      const weekly = sel.filter(t => t.interval === 'W').length;
+      const open = w.openArea === k;
+      return `<div class="${open ? 'open' : ''}">
+        <button class="acc-head lrow" data-action="wizArea" data-val="${k}" aria-expanded="${open}">${tile(k, 't40')}
+          <span class="grow"><b>${AREAS[k].name}</b><span>${plural(sel.length, 'Aufgabe', 'Aufgaben')}${weekly ? ` · ${weekly} wöchentlich` : ''}${sel.length < all.length ? ` · ${all.length - sel.length} abgewählt` : ''}</span></span>
+          ${ms('expand_more', 'chev outline')}</button>
+        ${open ? `<div class="wiz-tasks">${all.map(t => {
+          const off = w.off.includes(t.id);
+          return `<div class="trow${off ? ' off' : ''}">
+            <span class="grow"><b>${esc(t.name)}</b><span>${INTERVALS[t.interval].label} · ${t.points} Punkte</span></span>
+            <button class="switch sm${off ? '' : ' on'}" data-action="wizTask" data-id="${t.id}" role="switch" aria-checked="${!off}" aria-label="${esc(t.name)}"><span></span></button></div>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+    };
+    return `
+    <div class="hero"><h1>Euer Plan</h1><p class="lead">Das sind eure Aufgaben. Passt etwas nicht, klappt den Bereich auf und wählt es ab. Punkte und Abstände stellt ihr später in Ruhe ein.</p></div>
+    <div class="count"><b>${on.length}</b><span>Aufgaben · ${on.filter(t => t.interval === 'W').length} davon wöchentlich</span></div>
+    <div class="card lcard rows">${Object.keys(AREAS).map(area).join('')}</div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Passt so</button></div>`;
+  },
+
+  start: w => `
+    <div class="hero"><h1>Wie wollt ihr starten?</h1><p class="lead">Sonst wird in der ersten Woche alles auf einmal fällig. Beim sanften Start verteilen sich die Aufgaben, und ihr lernt die App erst einmal kennen.</p></div>
+    <button class="choice${w.start === 'soft' ? ' on' : ''}" data-action="wizStart" data-val="soft"><span class="radio"></span><span class="grow">
+      <span class="tag">Empfohlen</span><b>Sanfter Start</b>
+      <small>Aufgaben werden nach und nach fällig, nicht alle am selben Tag. Die ersten <b>${RULES.graceDays} Tage gibt es keine Minuspunkte</b>, Punkte sammelt ihr trotzdem.</small></span></button>
+    <button class="choice${w.start === 'now' ? ' on' : ''}" data-action="wizStart" data-val="now"><span class="radio"></span><span class="grow">
+      <b>Direkt loslegen</b><small>Alles läuft ab heute mit vollen Regeln. Für alle, die schon einen Putzplan gewohnt sind.</small></span></button>
+    <div class="card pad">${wizChart(w)}</div>
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Weiter</button></div>`,
+
+  voucher: w => {
+    const partner = esc(wizNames(w)[1]);
+    return wizPot(w, wizNames(w)[1], `Kleine Gefallen, ein Abend nach Wunsch oder eine romantische Geste 😉 ${partner} zieht beim Levelaufstieg verdeckt eine von drei Karten und sieht erst dann, was drinsteht.`);
+  },
+
+  invite: () => {
+    const partner = esc(ctx().partner.name);
+    return `
+    <div class="hero"><div class="big-icon">${ms('person_add')}</div><h1>Jetzt ${partner} einladen</h1>
+      <p class="lead">Schick ${partner} den Link. Wer ihn öffnet, ist in eurem Haushalt und sieht denselben Plan.</p></div>
+    <div class="card pad stack">
+      <div class="code-box center"><b>${esc(device.household)}</b></div>
+      <div class="btn2"><button class="pill mid" data-action="copyCode">${ms(ui.copied ? 'check' : 'content_copy')}${ui.copied ? 'Kopiert' : 'Code kopieren'}</button>
+        <button class="pill mid primary" data-action="share">${ms('ios_share')}Link teilen</button></div>
+    </div>
+    <div class="note-key">${ms('key')}<span><b>Das ist euer Schlüssel.</b> Ohne Konto ist er der einzige Weg zurück in euren Haushalt, z. B. auf einem neuen Handy. Am besten einmal kopieren und in den Notizen ablegen. Ihr findet ihn auch später unter Einstellungen.</span></div>
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizDone">Plan starten</button>
+      <button class="pill ghost" data-action="wizDone">Später einladen</button></div>`;
+  },
+
+  joinWelcome: () => {
+    const settings = store.get('settings');
+    const creator = esc(settings.players[0].name);
+    const left = graceLeft(settings, Date.now());
+    return `
+    <div class="hero partner"><div class="big-icon">${ms('waving_hand')}</div>
+      <h1>${creator} hat euch einen Putzplan angelegt</h1>
+      <p class="lead">Ihr seht denselben Plan und sammelt gemeinsam Punkte.${left ? ` Noch ${plural(left, 'Tag', 'Tage')} zum Reinkommen, ohne Minuspunkte.` : ''}</p></div>
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Mitmachen</button>
+      <button class="pill ghost" data-action="wizLeave">Doch nicht, eigenen Haushalt anlegen</button></div>`;
+  },
+
+  joinWho: w => {
+    const { players } = store.get('settings');
+    const me = players.find(p => p.id === w.me);
+    return `
+    <div class="hero"><h1>Wer bist du?</h1><p class="lead">Nur für dieses Handy. Name und Farbe kannst du später in den Einstellungen anpassen.</p></div>
+    <div class="card lcard rows">${players.map((p, i) => `<button class="lrow who-row" data-action="wizMe" data-id="${p.id}" aria-pressed="${p.id === w.me}">
+      ${avatar(p, 'lg')}<span class="grow"><b>${esc(p.name)}</b><span>${p.id === w.me ? 'Das bin ich' : i === 0 ? 'hat den Haushalt angelegt' : ''}</span></span>
+      ${ms(p.id === w.me ? 'check_circle' : 'radio_button_unchecked', p.id === w.me ? 'pick on' : 'pick outline')}</button>`).join('')}</div>
+    <div class="spacer"></div>
+    <div class="foot"><button class="pill primary big" data-action="wizNext">Weiter als ${esc(me.name)}</button></div>`;
+  },
+
+  joinVoucher: w => {
+    const { players } = store.get('settings');
+    const other = esc(players.find(p => p.id !== w.me).name);
+    const hasCards = store.list('voucher').some(v => v.to === w.me && !v.pickedAt);
+    return wizPot(w, players.find(p => p.id !== w.me).name, `${hasCards ? `${other} hat schon Karten für dich hinterlegt. Jetzt bist du dran: kleine` : 'Kleine'} Gefallen oder romantische Gesten 😉 ${other} zieht beim nächsten Levelaufstieg verdeckt eine davon.`);
+  },
+};
+
+function renderWizard() {
+  const w = ui.wiz;
+  const steps = wizSteps(w);
+  const key = steps[w.step];
+  // Zurück gibt es nicht auf dem ersten Schritt und nicht mehr, wenn der Haushalt schon angelegt ist.
+  const showBack = w.step > 0 && key !== 'invite';
+  const dots = steps.slice(1);
+  const top = w.step > 0 || w.flow === 'code' ? `<div class="wiz-top">
+      ${showBack || w.flow === 'code' ? `<button class="icon-btn" data-action="wizBack" aria-label="Zurück">${ms('arrow_back')}</button>` : '<span class="icon-btn"></span>'}
+      ${dots.length > 1 ? `<div class="dots">${dots.map((_, i) => `<i class="${i < w.step ? 'on' : ''}"></i>`).join('')}</div>
+      <span class="step-of">${w.step}/${dots.length}</span>` : ''}</div>` : '';
+  // Einblenden nur beim Wechsel des Schritts, nicht bei jedem Neuzeichnen.
+  const enter = key !== renderWizard.last;
+  $app.innerHTML = `<main class="wiz${enter ? ' enter' : ''}">${top}${wizScreens[key](w)}</main>${toastHtml()}`;
+  if (enter) scrollTo(0, 0);
+  renderWizard.last = key;
+  w.fresh = null;
 }
 
-function renderWhoAmI(settings) {
-  $app.innerHTML = `<main class="setup">
-    <div class="logo">${ms('waving_hand')}</div><h1>Wer bist du?</h1>
-    <p>Nur für dieses Handy. Lässt sich später in den Einstellungen ändern.</p>
-    <div class="who-list">${settings.players.map(p => `<button class="who-btn" data-action="setMe" data-id="${p.id}">${avatar(p, 'lg')}${esc(p.name)}</button>`).join('')}</div>
-  </main>`;
-}
-
-function createHousehold(name1, name2) {
-  openHousehold(newHouseholdCode());
-  store.put('settings', 'settings', {
-    players: [{ id: 'a', name: name1, color: 0 }, { id: 'b', name: name2, color: 1 }],
-    startedAt: Date.now(),
-    pointOverrides: {},
+// Haushalt aus dem Assistenten anlegen: Plan, Abgewähltes ausgeblendet, sanfter Start, erste Karten.
+function createFromWizard() {
+  const w = ui.wiz;
+  const setup = wizSetup(w);
+  const plan = planTasks(setup);
+  const off = w.off.filter(id => plan.some(t => t.id === id));
+  const active = plan.filter(t => !off.includes(t.id));
+  const now = Date.now();
+  createHousehold(wizNames(w).map((name, i) => ({ id: 'ab'[i], name, color: w.colors[i] })), {
+    startedAt: now,
+    setup,
+    ...(w.start === 'soft' ? { firstDue: staggerFirstDue(active), graceUntil: now + RULES.graceDays * DAY } : {}),
   });
+  for (const id of off) store.put('task', id, { hidden: true });
+  for (const text of w.cards) store.put('voucher', uid('v'), { from: 'a', to: 'b', text, createdAt: now });
+}
+
+function finishJoin() {
+  const w = ui.wiz;
+  const other = store.get('settings').players.find(p => p.id !== w.me);
+  for (const text of w.cards) store.put('voucher', uid('v'), { from: w.me, to: other.id, text, createdAt: Date.now() });
+  device.me = w.me;
+  saveDevice();
+  ui.wiz = null;
+  ui.view = 'home';
+  render();
+  scrollTo(0, 0);
+}
+
+function wizAddCard(text) {
+  const w = ui.wiz;
+  text = text.trim();
+  if (!text) return;
+  w.cards.push(text);
+  w.fresh = w.cards.length - 1;
+  w.draft = '';
+  w.writeMore = false;
+  render();
+  if (w.cards.length < 3) document.getElementById('wiz-card')?.focus();
+}
+
+const wizActions = {
+  wizNext: () => {
+    const w = ui.wiz;
+    const key = wizSteps(w)[w.step];
+    if (key === 'voucher') createFromWizard();
+    if (key === 'joinWho' && store.list('voucher').some(v => v.from === w.me && !v.pickedAt)) return finishJoin();
+    if (key === 'joinVoucher') return finishJoin();
+    w.step++;
+    render();
+  },
+  wizBack: () => {
+    const w = ui.wiz;
+    if (w.flow === 'code') { ui.error = null; ui.wiz = newWizard('create'); } else w.step--;
+    render();
+  },
+  wizFlow: d => { ui.error = null; ui.wiz = newWizard(d.val); render(); },
+  wizDone: () => { ui.wiz = null; ui.view = 'home'; render(); scrollTo(0, 0); },
+  wizLeave: () => {
+    device = {};
+    saveDevice();
+    unsubscribe?.();
+    store = null;
+    ui.wiz = null;
+    render();
+  },
+  wizColor: d => { ui.wiz.colors[Number(d.i)] = Number(d.val); render(); },
+  wizCount: d => {
+    const w = ui.wiz, max = d.key === 'baths' ? MAX_BATHS : ROOM_NAMES.length;
+    w[d.key] = Math.max(1, Math.min(max, w[d.key] + Number(d.dir)));
+    render();
+  },
+  wizFeature: d => { ui.wiz.features[d.val] = !ui.wiz.features[d.val]; render(); },
+  wizArea: d => { ui.wiz.openArea = ui.wiz.openArea === d.val ? null : d.val; render(); },
+  wizTask: d => {
+    const off = ui.wiz.off;
+    if (off.includes(d.id)) off.splice(off.indexOf(d.id), 1); else off.push(d.id);
+    render();
+  },
+  wizStart: d => { ui.wiz.start = d.val; render(); },
+  wizMe: d => { ui.wiz.me = d.id; render(); },
+  wizIdea: d => wizAddCard(d.val),
+  wizAddCard: () => wizAddCard(ui.wiz.draft),
+  wizMoreCard: () => { ui.wiz.writeMore = true; render(); document.getElementById('wiz-card')?.focus(); },
+  wizRemoveCard: d => { ui.wiz.cards.splice(Number(d.i), 1); render(); },
+};
+
+function createHousehold(players, extra = {}) {
+  openHousehold(newHouseholdCode());
+  // Vor dem ersten Speichern: jedes put zeichnet neu, und ohne device.me käme „Wer bist du?“.
+  device.me = 'a';
+  saveDevice();
+  store.put('settings', 'settings', { players, startedAt: Date.now(), pointOverrides: {}, ...extra });
   for (const [level, text] of Object.entries(DEFAULT_REWARDS)) {
     store.put('reward', `reward-L${level}`, { level: Number(level), text });
   }
-  device.me = 'a';
-  saveDevice();
   cleanUrl();
 }
 
 // Beispieldaten für den Demo-Modus, damit alle Ansichten etwas zeigen.
 function seedDemo() {
-  createHousehold('Alex', 'Sam');
+  createHousehold([{ id: 'a', name: 'Alex', color: 0 }, { id: 'b', name: 'Sam', color: 1 }]);
   const now = Date.now();
   const startedAt = now - 12 * DAY;
   store.put('settings', 'settings', { ...store.get('settings'), startedAt });
@@ -879,6 +1195,7 @@ function openHousehold(code) {
 async function joinHousehold(code) {
   const prev = { ...device };
   ui.error = null;
+  ui.wiz = null;
   device = { household: code };
   openHousehold(code);
   ui.view = 'home';
@@ -890,7 +1207,7 @@ async function joinHousehold(code) {
     const error = store.status.startsWith('error') ? `Verbindung fehlgeschlagen: ${store.status}` : 'Zu diesem Code gibt es keinen Haushalt.';
     device = prev;
     saveDevice();
-    if (prev.household) { openHousehold(prev.household); showToast(error); } else { store = null; ui.error = error; }
+    if (prev.household) { openHousehold(prev.household); showToast(error); } else { store = null; ui.error = error; ui.wiz = newWizard('code'); }
   }
   render();
 }
@@ -906,13 +1223,16 @@ function markPresence() {
 
 function render() {
   renderDeferred = false;
-  if (!store) return renderSetup();
+  const known = Boolean(store?.get('settings')?.players.some(p => p.id === device.me));
+  if (ui.wiz?.flow === 'join' && known) ui.wiz = null;
+  if (ui.wiz) return renderWizard();
+  if (!store) { ui.wiz = newWizard(joinParam() ? 'code' : 'create'); return renderWizard(); }
   const settings = store.get('settings');
   if (!settings) {
     $app.innerHTML = `<main class="setup"><div class="logo">${ms('sync')}</div><h1>Verbinde …</h1><p>${syncLabel()}</p></main>`;
     return;
   }
-  if (!device.me || !settings.players.some(p => p.id === device.me)) return renderWhoAmI(settings);
+  if (!known) { ui.wiz = newWizard('join'); return renderWizard(); }
   markPresence();
   const c = ctx();
   const views = { home: viewHome, rewards: viewRewards, stats: viewStats, settings: viewSettings };
@@ -951,13 +1271,21 @@ document.addEventListener('input', e => {
     ui.modal.name = el.value;
   } else if (el.id === 'voucher-text') {
     document.querySelector('[data-action="addVoucher"]').disabled = !el.value.trim();
-  } else if (el.id === 'join-code' && ui.view === 'settings') {
+  } else if (el.dataset.wizname) {
+    ui.wiz.names[el.dataset.wizname] = el.value;
+    document.getElementById('wiz-names-next').disabled = !ui.wiz.names.every(n => n.trim());
+  } else if (el.id === 'wiz-card') {
+    ui.wiz.draft = el.value;
+    document.querySelector('[data-action="wizAddCard"]').disabled = !el.value.trim();
+  } else if (el.id === 'join-code' && ui.view === 'settings' && !ui.wiz) {
     document.querySelector('[data-action="joinOther"]').disabled = !normalizeCode(el.value);
   }
 });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   if (e.target.id === 'voucher-text') actions.addVoucher();
+  else if (e.target.id === 'wiz-card') wizAddCard(e.target.value);
+  else if (e.target.id === 'join-code' && ui.wiz) actions.join();
   else if (e.target.id === 'reward-text') document.querySelector('[data-action="saveReward"]')?.click();
   else if (e.target.id === 'search') e.target.blur();
 });
@@ -1065,6 +1393,16 @@ function saveTask(task, { name = task.name, interval = task.interval, points, ar
     if (points === std.points) delete overrides[task.id]; else overrides[task.id] = points;
     updateSettings({ pointOverrides: overrides });
   }
+}
+
+function toggleHidden(t) {
+  const prev = store.get(t.id);
+  // Wieder eingeblendet startet die Uhr neu, damit die ausgeblendete Zeit keine Abzüge kostet.
+  store.put('task', t.id, { ...prev, hidden: !t.hidden, ...(t.hidden ? { since: Date.now() } : {}) });
+  showToast(t.hidden ? `„${t.name}“ ist wieder im Plan` : `„${t.name}“ ausgeblendet`,
+    { sub: t.hidden ? '' : 'Wieder einblenden: Einstellungen → Aufgaben',
+      undo: () => (prev ? store.put('task', t.id, prev) : store.update(t.id, { deleted: true })) });
+  render();
 }
 
 const actions = {
@@ -1231,13 +1569,9 @@ const actions = {
   toggleHideTask: () => {
     const t = taskById(ui.modal.id);
     ui.modal = null;
-    const prev = store.get(t.id);
-    // Wieder eingeblendet startet die Uhr neu, damit die ausgeblendete Zeit keine Abzüge kostet.
-    store.put('task', t.id, { ...prev, hidden: !t.hidden, ...(t.hidden ? { since: Date.now() } : {}) });
-    showToast(t.hidden ? `„${t.name}“ ist wieder im Plan` : `„${t.name}“ ausgeblendet`,
-      { undo: () => (prev ? store.put('task', t.id, prev) : store.update(t.id, { deleted: true })) });
-    render();
+    toggleHidden(t);
   },
+  hideFromSheet: d => { ui.sheet = null; toggleHidden(taskById(d.id)); },
   setMe: d => { device.me = d.id; saveDevice(); render(); },
   setColor: d => updatePlayer(d.id, { color: Number(d.val) }),
   share: async () => {
@@ -1275,22 +1609,19 @@ const actions = {
     render();
   },
 
-  create: () => {
-    const v = id => document.getElementById(id).value.trim();
-    if (!v('n1') || !v('n2')) { ui.error = 'Bitte beide Namen eintragen.'; return renderSetup(); }
-    ui.error = null;
-    createHousehold(v('n1'), v('n2'));
-    render();
-  },
   join: () => {
     const code = normalizeCode(document.getElementById('join-code').value);
-    if (!code) { ui.error = 'Der Code hat 20 Zeichen, z. B. ABCD-EFGH-JKMN-PQRS-TUVW.'; return renderSetup(); }
+    if (!code) { ui.error = 'Der Code hat 20 Zeichen, z. B. ABCD-EFGH-JKMN-PQRS-TUVW.'; return render(); }
     joinHousehold(code);
   },
+  ...wizActions,
 };
 
 const changes = {
   playerName: (el, d) => updatePlayer(d.id, { name: el.value.trim() || '?' }),
+  roomName: (el, d) => updateSettings(s => ({
+    setup: { ...s.setup, rooms: s.setup.rooms.map((r, i) => (i === Number(d.i) ? el.value.trim() || ROOM_NAMES[i] : r)) },
+  })),
 };
 
 document.addEventListener('click', e => {
@@ -1305,7 +1636,9 @@ document.addEventListener('change', e => {
 
 // ---------- Start ----------
 
-if (DEMO && !device.household) seedDemo();
+// ?demo&new: Einrichtung im Demo-Modus ausprobieren (vorheriger Demo-Haushalt wird auf diesem Gerät abgemeldet).
+if (DEMO && new URLSearchParams(location.search).has('new')) { device = {}; saveDevice(); }
+else if (DEMO && !device.household) seedDemo();
 else if (device.household) openHousehold(device.household);
 if (DEMO) {
   const q = new URLSearchParams(location.search);
@@ -1317,7 +1650,8 @@ render();
 
 // Einladungslink, während schon ein Haushalt offen ist: nachfragen und wechseln.
 const linkCode = normalizeCode(joinParam());
-if (store && linkCode) {
+if (!store && linkCode && CLOUD) joinHousehold(linkCode);
+else if (store && linkCode) {
   if (linkCode !== device.household && !DEMO &&
       confirm('Du hast einen Einladungslink geöffnet. Diesem Haushalt beitreten? Du verlässt dann deinen bisherigen Haushalt auf diesem Gerät.')) {
     joinHousehold(linkCode);

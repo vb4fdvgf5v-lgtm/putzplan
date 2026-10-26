@@ -7,11 +7,11 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage v
 
 ## Stand und nächster Schritt (26.10.2026)
 
-- Veröffentlicht bis **2.7**. Danach nur der Prototyp der Einrichtung committet (keine App-Änderung).
-- **Nächster Schritt: Version 2.8 = Einrichtung für neue Haushalte (nur Paare) plus sanfter Start.**
-  Alle Entscheidungen, Abläufe und offenen Punkte: [design/onboarding/PLAN-2.8.md](design/onboarding/PLAN-2.8.md),
-  klickbarer Prototyp: [design/onboarding/index.html](design/onboarding/index.html). Vor dem Bauen Plan lesen.
-- Was 2.2–2.7 gebracht haben, steht kurz im [CHANGELOG.md](CHANGELOG.md).
+- **2.8 gebaut und committet** (Einrichtung für neue Haushalte, sanfter Start). Entscheidungen:
+  [design/onboarding/PLAN-2.8.md](design/onboarding/PLAN-2.8.md), Vorlage: [design/onboarding/index.html](design/onboarding/index.html).
+- Neue Haushalte haben `settings.setup` und bekommen ihren Plan aus `planTasks` (`js/tasks.js`), der bestehende
+  Haushalt hat kein `setup` und rechnet unverändert mit `TASKS`. Das muss so bleiben.
+- Was 2.2–2.8 gebracht haben, steht kurz im [CHANGELOG.md](CHANGELOG.md).
 
 ## Arbeitsweise
 
@@ -20,7 +20,8 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage v
 - **Vorschau:** Launch-Konfiguration `putz-app` (Port 8780) aus `Claude Projekte/.claude/launch.json`.
 - **Nie gegen den echten Haushalt testen.** Die normale Vorschau ist mit den echten Supabase-Daten
   verbunden. Zum Ausprobieren `http://localhost:8780/?demo` nutzen: eigener Test-Haushalt mit
-  Beispieldaten, ohne Supabase. `&view=rewards|stats|settings` und `&sheet=<taskId>` öffnen direkt
+  Beispieldaten, ohne Supabase. `?demo&new` startet stattdessen die Einrichtung (Demo-Haushalt wird
+  dafür auf dem Gerät abgemeldet). `&view=rewards|stats|settings` und `&sheet=<taskId>` öffnen direkt
   eine Ansicht.
 - **Tests:** `node --test putz-app/test/game.test.mjs` nach jeder Regeländerung.
 - **Nach jeder Änderung** `VERSION` in `putz-app/sw.js` hochzählen, sonst laden die iPhones die neue Fassung nicht.

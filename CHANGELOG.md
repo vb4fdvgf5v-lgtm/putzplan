@@ -2,6 +2,11 @@
 
 Kurz und alltagstauglich, zum Weiterschicken. Die aktuelle Version steht in der App unter Einstellungen ganz unten.
 
+## 2.8 (26.10.)
+- Neue Haushalte richten sich in 2 Minuten ein: Namen und Farben, Bäder, Wohnräume und Ausstattung, daraus der passende Plan, erste Überraschungen und Einladung per Link
+- Sanfter Start für neue Haushalte: Aufgaben werden nach und nach fällig, 14 Tage ohne Minuspunkte, Aufgaben lassen sich direkt aus der Aufgabe ausblenden
+- Wer per Link beitritt, wird begrüßt, wählt sich aus und legt gleich eine Überraschung für den anderen hin. Euer bestehender Haushalt bleibt unverändert
+
 ## 2.7 (23.10.)
 - Abhaken geht nur, wenn mindestens eine Überraschung von dir für den anderen im Topf liegt. Ist der Topf leer, zeigt „Heute“ oben einen Hinweis mit Knopf zum Hinlegen
 

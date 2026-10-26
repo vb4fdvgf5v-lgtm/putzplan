@@ -143,3 +143,80 @@ test('später angelegte Aufgabe startet halb frisch, ohne rückwirkende Abzüge'
   assert.equal(s.penaltyTotal, 0);
   assert.equal(s.status[task.id].due, start + 63.5 * DAY);
 });
+
+test('Einrichtung: Plan aus Räumen und Ausstattung', async () => {
+  const { planTasks, defaultSetup, dailyTasks } = await import('../js/tasks.js');
+  const ids = setup => planTasks(setup).map(t => t.id);
+  const base = defaultSetup();
+  const plan = planTasks(base);
+  assert.equal(new Set(plan.map(t => t.id)).size, plan.length, 'IDs eindeutig');
+  // 4 Räume: Aufräumen + Staub je Raum, Fenster ohne Flur
+  assert.equal(plan.filter(t => t.id.startsWith('w-raum')).length, 4 * 2 + 3);
+  assert.equal(plan.some(t => t.name === 'Fenster putzen: Flur'), false);
+  assert.equal(plan.find(t => t.id === 'w-technik').name, 'Arbeitszimmer: Technik entstauben');
+  assert.equal(ids(base).includes('b-wc-2'), false);
+  assert.equal(ids(base).includes('w-staub-wohn'), false);
+  // 3 Bäder: Bad-2-Aufgaben auch als Bad 3
+  const three = planTasks({ ...base, baths: 3 });
+  assert.equal(three.find(t => t.id === 'b-wc-3').name, 'Bad 3: WC putzen');
+  // ohne Roboter: Saugen und Wischen statt Roboter-Aufgaben
+  const noRobo = ids({ ...base, features: { ...base.features, robo: false } });
+  assert.equal(noRobo.some(id => id.startsWith('r-')), false);
+  assert.ok(noRobo.includes('w-saugen') && noRobo.includes('w-wischen'));
+  assert.equal(ids(base).includes('w-saugen'), false);
+  // 2 Räume: kein Arbeitszimmer, keine Technik
+  assert.equal(ids({ ...base, rooms: ['Wohnzimmer', 'Schlafzimmer'] }).includes('w-technik'), false);
+  // umbenannter Flur bleibt ohne Fenster, IDs bleiben
+  const renamed = planTasks({ ...base, rooms: ['Wohnzimmer', 'Schlafzimmer', 'Diele', 'Büro'] });
+  assert.deepEqual(renamed.map(t => t.id), plan.map(t => t.id));
+  assert.equal(renamed.find(t => t.id === 'w-raum3-staub').name, 'Staubwischen: Diele');
+  // Alltag passend zur Ausstattung, ohne Einrichtung alle
+  assert.equal(dailyTasks({ ...base, features: { ...base.features, waschma: false } }).some(d => d.id === 'a-waesche'), false);
+  assert.equal(dailyTasks(undefined).length, 4);
+});
+
+test('sanfter Start: Wochenaufgaben verteilt über Tag 2 bis 7', async () => {
+  const { staggerFirstDue, firstDueByDay } = await import('../js/game.js');
+  const { planTasks, defaultSetup } = await import('../js/tasks.js');
+  const plan = planTasks(defaultSetup());
+  const firstDue = staggerFirstDue(plan);
+  const weekly = plan.filter(t => t.interval === 'W');
+  assert.ok(weekly.every(t => firstDue[t.id] >= 1 && firstDue[t.id] <= 6));
+  const byDay = firstDueByDay(plan, firstDue);
+  assert.ok(Math.max(...byDay) <= Math.ceil(weekly.length / 6) + 1);
+  assert.equal(firstDueByDay(plan, null)[3], weekly.length); // ohne: alle an Tag 4
+  // compute nutzt die erste Fälligkeit und startet halb frisch
+  const task = { id: 'x', interval: 'W', points: 10 };
+  const s = compute({ tasks: [task], completions: [], settings: { startedAt: start, firstDue: { x: 2 } }, players, now: start });
+  assert.equal(s.status.x.due, start + 2 * DAY);
+  assert.equal(s.cleanliness, 50);
+  // später eingeblendet: normale Regel
+  const later = compute({ tasks: [{ ...task, since: start + 5 * DAY }], completions: [], settings: { startedAt: start, firstDue: { x: 2 } }, players, now: start + 5 * DAY });
+  assert.equal(later.status.x.due, start + 8.5 * DAY);
+});
+
+test('Eingewöhnung: keine Abzüge, danach zählen die Tage ab dem Ende', () => {
+  const settings = { startedAt: start, graceUntil: start + 14 * DAY };
+  const at = now => compute({ tasks: [wc], completions: [], settings, players, now });
+  // fällig nach 3,5 Tagen, an Tag 13 überfällig, aber ohne Abzug
+  const during = at(start + 13 * DAY);
+  assert.equal(during.grace, true);
+  assert.equal(during.status[wc.id].overdue, true);
+  assert.equal(during.penaltyTotal, 0);
+  assert.equal(during.status[wc.id].penaltyPerDay, 0);
+  // 3 Tage nach der Eingewöhnung: 3 Abzugstage à 2 Punkte
+  const after = at(start + 17 * DAY);
+  assert.equal(after.grace, false);
+  assert.equal(after.penaltyTotal, 3 * 2);
+  assert.equal(after.status[wc.id].penaltyPerDay, 2);
+});
+
+test('bestehender Haushalt: ohne Einrichtung rechnet alles wie bisher', () => {
+  const now = start + 40 * DAY;
+  const completions = [{ taskId: 'k-herd', player: 'a', at: start + 3 * DAY, points: 5 }];
+  const plain = compute({ tasks: TASKS, completions, settings: { startedAt: start }, players, now });
+  const withEmpty = compute({ tasks: TASKS, completions, settings: { startedAt: start, firstDue: undefined, graceUntil: undefined }, players, now });
+  assert.equal(plain.penaltyTotal, withEmpty.penaltyTotal);
+  assert.equal(plain.status['b-dusche-1'].due, start + 3.5 * DAY);
+  assert.equal(plain.grace, false);
+});

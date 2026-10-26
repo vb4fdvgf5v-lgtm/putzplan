@@ -8,7 +8,41 @@ export const RULES = {
   penaltyCapDays: 10,   // nach 10 Tagen ist der Abzug gedeckelt (= 100 % der Punkte)
   rescueBonus: 0.5,     // +50 % aufs persönliche Level, wenn man eine überfällige Aufgabe erledigt
   freshFraction: 0.5,   // bis zur Hälfte des Intervalls gilt eine Aufgabe als frisch (nur Anzeige und Sortierung)
+  graceDays: 14,        // sanfter Start: so lange keine Abzüge
 };
+
+// Sanfter Start: erste Fälligkeit je Intervall verteilt über diese Tage nach dem Start (0 = erster Tag).
+const STAGGER = { W: [1, 6], '2W': [3, 13], M: [7, 29], Q: [14, 89] };
+
+/**
+ * Erste Fälligkeit je Aufgabe in Tagen nach dem Start (settings.firstDue). Reihum verteilt, damit
+ * an einem Tag nicht nur ein Bereich dran ist. Wird einmal beim Anlegen berechnet und gespeichert.
+ */
+export function staggerFirstDue(tasks) {
+  const out = {};
+  for (const [iv, [from, to]] of Object.entries(STAGGER)) {
+    const list = tasks.filter(t => t.interval === iv);
+    const span = to - from + 1;
+    list.forEach((t, i) => {
+      out[t.id] = list.length <= span ? from + Math.floor(i * span / list.length) : from + (i % span);
+    });
+  }
+  return out;
+}
+
+/** Wie viele Aufgaben an den ersten `days` Tagen erstmals fällig werden (für die Grafik in der Einrichtung). */
+export function firstDueByDay(tasks, firstDue, days = 14) {
+  const out = Array(days).fill(0);
+  for (const t of tasks) {
+    const d = firstDue ? firstDue[t.id] : Math.floor(INTERVALS[t.interval].days / 2);
+    if (d !== undefined && d < days) out[d]++;
+  }
+  return out;
+}
+
+/** Eingewöhnung: läuft, solange settings.graceUntil in der Zukunft liegt. */
+export const graceLeft = (settings, now) =>
+  settings.graceUntil > now ? Math.ceil((settings.graceUntil - now) / DAY) : 0;
 
 export const PERSONAL = {
   thresholds: [0, 150, 400, 800, 1400, 2200, 3200, 4500, 6200, 8500],
@@ -103,12 +137,15 @@ export function pauseClock(pauses = [], now) {
  * Wertet den kompletten Verlauf aus.
  * Zu Beginn gilt jede Aufgabe als halb frisch, damit nicht alles sofort überfällig ist.
  * Das gilt auch für später angelegte oder wieder eingeblendete Aufgaben (task.since).
+ * Sanfter Start: settings.firstDue legt die erste Fälligkeit fest, bis settings.graceUntil gibt es keine Abzüge
+ * (die Abzugstage zählen erst ab dann).
  */
 export function compute({ tasks, completions, settings, players, now }) {
   const start = settings.startedAt;
   const { toEff, toReal } = pauseClock(settings.pauses, now);
   const paused = Boolean(activePause(settings));
   const nowE = toEff(now);
+  const graceE = settings.graceUntil ? toEff(settings.graceUntil) : -Infinity;
   const done = completions.filter(c => !c.deleted).sort((a, b) => a.at - b.at);
   const byTask = new Map(tasks.map(t => [t.id, []]));
   for (const c of done) byTask.get(c.taskId)?.push(c);
@@ -122,24 +159,31 @@ export function compute({ tasks, completions, settings, players, now }) {
     const list = byTask.get(task.id);
     // Alles hier in Putz-Zeit, damit Urlaubspausen weder Frische noch Abzüge kosten.
     const accrue = (due, until) => {
-      const days = Math.min(RULES.penaltyCapDays, Math.floor((until - due) / DAY));
-      for (let d = 1; d <= days; d++) ticks.push({ at: toReal(due + d * DAY), amount: p * RULES.penaltyRate });
+      const from = Math.max(due, graceE);
+      const days = Math.min(RULES.penaltyCapDays, Math.floor((until - from) / DAY));
+      for (let d = 1; d <= days; d++) ticks.push({ at: toReal(from + d * DAY), amount: p * RULES.penaltyRate });
     };
     const begin = Math.max(start, task.since ?? 0);
-    let last = toEff(begin) - iv / 2;
+    const firstDue = begin === start ? settings.firstDue?.[task.id] : undefined;
+    let last = firstDue === undefined ? toEff(begin) - iv / 2 : toEff(start + firstDue * DAY) - iv;
     for (const c of list) { const at = toEff(c.at); accrue(last + iv, at); last = Math.max(last, at); }
     accrue(last + iv, nowE);
 
     const due = last + iv;
     const overdueDays = nowE > due ? Math.floor((nowE - due) / DAY) : 0;
-    const freshness = Math.max(0, Math.min(1, 1 - (nowE - last) / iv));
+    const penaltyDays = Math.floor((nowE - Math.max(due, graceE)) / DAY);
+    // Mit fester erster Fälligkeit startet die Frische wie sonst bei der Hälfte und sinkt bis dahin auf 0.
+    const fresh = firstDue !== undefined && !list.length
+      ? 0.5 * (due - nowE) / (due - toEff(start))
+      : 1 - (nowE - last) / iv;
+    const freshness = Math.max(0, Math.min(1, fresh));
     const lastC = list[list.length - 1];
     status[task.id] = {
       points: p, freshness, overdueDays,
       last: lastC ? lastC.at : begin,
       due: toReal(due),
       overdue: nowE > due,
-      penaltyPerDay: !paused && nowE > due && overdueDays < RULES.penaltyCapDays ? p * RULES.penaltyRate : 0,
+      penaltyPerDay: !paused && nowE > due && nowE >= graceE && penaltyDays < RULES.penaltyCapDays ? p * RULES.penaltyRate : 0,
       freshUntil: lastC ? toReal(last + iv * RULES.freshFraction) : 0,
       lastBy: lastC?.player ?? null,
       count: list.length,
@@ -175,6 +219,7 @@ export function compute({ tasks, completions, settings, players, now }) {
     status,
     done,
     paused,
+    grace: nowE < graceE,
     cleanliness: weightSum ? Math.round((freshWeighted / weightSum) * 100) : 100,
     penaltyTotal: Math.round(ticks.reduce((s, t) => s + t.amount, 0)),
     penaltyPerDayNow: Object.values(status).reduce((s, x) => s + x.penaltyPerDay, 0),
