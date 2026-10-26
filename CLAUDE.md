@@ -5,6 +5,14 @@ Fachliche Regeln, Aufbau und Einrichtung stehen in [putz-app/README.md](putz-app
 Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage vor 2.0). Umgesetztes Design 2.0:
 [design/handoff-v2/README.md](design/handoff-v2/README.md), Prototyp per Launch-Konfiguration `putz-design` (Port 8781), maßgeblich 3a, 4c, 5b, 7a.
 
+## Stand und nächster Schritt (26.10.2026)
+
+- Veröffentlicht bis **2.7**. Danach nur der Prototyp der Einrichtung committet (keine App-Änderung).
+- **Nächster Schritt: Version 2.8 = Einrichtung für neue Haushalte (nur Paare) plus sanfter Start.**
+  Alle Entscheidungen, Abläufe und offenen Punkte: [design/onboarding/PLAN-2.8.md](design/onboarding/PLAN-2.8.md),
+  klickbarer Prototyp: [design/onboarding/index.html](design/onboarding/index.html). Vor dem Bauen Plan lesen.
+- Was 2.2–2.7 gebracht haben, steht kurz im [CHANGELOG.md](CHANGELOG.md).
+
 ## Arbeitsweise
 
 - **Code:** `putz-app/` (Vanilla JS, keine Abhängigkeiten). Aufgabenkatalog in `js/tasks.js`,
@@ -27,8 +35,27 @@ Design-Kontext: [design/DESIGN-BRIEF.md](design/DESIGN-BRIEF.md) (Ausgangslage v
   veröffentlicht nach ca. 1 Minute unter https://vb4fdvgf5v-lgtm.github.io/putzplan/putz-app/.
 - **Icons:** Material Symbols, in `index.html` nur die verwendeten per `icon_names=` (alphabetisch).
   Neues Icon in `app.js` oder `tasks.js` → dort ergänzen, sonst erscheint der Name als Text.
+- **Worktree-Sitzungen:** Arbeit im eigenen Worktree committen, dann im Haupt-Checkout
+  `putzplan/` per `git merge --ff-only <branch>` auf `main` bringen. Vorher `git status -sb` und `git log` dort
+  prüfen: Andere Sitzungen committen ebenfalls auf `main` (so kam 2.5). Liegt dort Neues, erst mit dem
+  App-Werkzeug `sync_with_base_branch` (Basis `main`) in den Worktree holen, Konflikte lösen, dann zusammenführen.
+  Die Root-Launch-Konfiguration zeigt auf den Haupt-Checkout; für den Worktree eine eigene
+  `.claude/launch.json` im Worktree anlegen (nicht committen).
+- **Testnamen:** in Demo und Prototypen nur die Platzhalter Alex und Sam verwenden, keine anderen Namen.
 - **Screenshots** für das Design-Briefing: `design/screenshots/`, erzeugt mit Chrome headless
   gegen `?demo` (Fensterbreite 500, da Chrome headless schmaler nicht kann).
+
+## Stolpersteine in der Oberfläche
+
+- `render()` baut die ganze Seite per `innerHTML` neu. Der Sync zeichnet direkt nach jeder Änderung mehrmals
+  neu (gespeichert, „synchronisiere …“, „alles synchron“). Deshalb: Animationen nicht bei jedem Neuzeichnen neu
+  starten (Toast: negative `animation-delay` ab `ui.toast.at`; offenes Fenster: Animation aus), Scrollposition
+  seitlicher Reihen retten (Alltag-Reihe), Eingaben über den `input`-Handler in `ui` spiegeln.
+  Im Demo-Modus gibt es keinen Sync, solche Effekte sieht man dort nicht.
+- iOS: Eingabefelder mindestens 16 px, sonst zoomt Safari beim Antippen. Fenster mit Eingabefeld
+  (`.modal.form`) oben verankern, nicht automatisch fokussieren.
+- Nach dem Neustart des Vorschau-Servers kann der Service Worker eine alte Fassung liefern: im Browser
+  Service Worker abmelden und Caches leeren, dann neu laden.
 
 ## Versionen und Release-Notes
 
